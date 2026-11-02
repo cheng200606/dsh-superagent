@@ -1,5 +1,7 @@
 # dsh-superagent
 
+> **This repository is a fork.** It carries the upstream research prototype unchanged in the root tree and adds Windows and host-contract adaptations, plus one upstream defect fix, on top of it. Everything added here lives in [`local/`](local/README.md): the [feasibility evaluation](local/docs/evaluation.md), the [patch set with its upgrade SOP](local/docs/windows-patches.md), the replayable [patch file](local/patches/dsh-superagent-windows-host.patch) and a [verification script](local/scripts/verify-restart-survival.mjs). Upstream is `deepseek-ai/dsh-superagent-prototype`; the `upstream` remote points there.
+
 > **Research prototype for reference only, not an official DeepSeek product.** This code grew out of our team's day-to-day development work, with much of the engineering done by coding agents. Treat it as research code, not production-ready software. It may still contain bugs, and its coding style and engineering practices may be inconsistent. Review and adapt it before using it in your own environment.
 >
 > We have adapted it for publication, so it is not identical to our internal version or the implementation described in *Exploring Super-agent Design: Towards a More Autonomous Agent System*. Some designs discussed in the article are directions for future development and are not implemented in this prototype.
