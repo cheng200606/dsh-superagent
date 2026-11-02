@@ -91,6 +91,13 @@ export function OverviewPage() {
         {data.flow.dropped > 0 && stat(t('flowDroppedLabel'), data.flow.dropped, { page: 'source' })}
       </div>
     </Section>
+    {/* Finished tickets of the last day: the result reaches the operator's eye without opening the Execution page.
+        A host before this section answers without the field, which shows as no results rather than a crash. */}
+    <Section title={t('recentResults')} count={data.results?.length ?? 0}
+      action={data.results?.length ? more({ page: 'execution', query: { filter: 'ended' } }) : undefined}>
+      {data.results?.length ? <ul className="dt-list dt-cards">{data.results.map(ticket => <TicketLine key={ticket.id} ticket={ticket} />)}</ul>
+        : <Hint>{t('noResults')}</Hint>}
+    </Section>
     <Section title={t('term.executor')} action={more({ page: 'execution' })}>
       {/* Pauses surface in `problems` above, so Executor counts render the same in both states; while setup waits, nothing runs. */}
       {setup?.problem ? <Hint>{t('executorWaitingSetup')}</Hint> : <div className="dt-stats">

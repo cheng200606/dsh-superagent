@@ -197,6 +197,8 @@ const overviewView = (): ApiResponse<'GET overview'> => {
       ...Object.values(server.settings.policy.sources).some(part => part.allowed.length) ? [] : [{ kind: 'no-allowed' as const }],
       ...server.failing.map(outgoing => ({ kind: 'outgoing' as const, outgoing }))],
     person: server.person, executor: { running: 2, queued: 0, maxWorkers: server.settings.executor.maxWorkers, idle: 1 },
+    // As on the host: the tickets that ended in the last day, computed from the ended list.
+    results: server.tickets.ended.filter(ticket => (ticket.ended?.at ?? '') >= dayAgo()),
     flow: { received: 12, filtered: 2, triggers: 10, judged: 5, accepted: 1, evaluating: 0,
       dropped: server.dropped.filter(item => item.dropped.at >= dayAgo()).length },
     policyVersion: 'abcdef1234567890',

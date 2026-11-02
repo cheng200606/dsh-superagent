@@ -103,6 +103,8 @@ const TEXT = {
   createTicketText: ['请求', 'Request'],
   createTicketTextEmpty: ['例如：把 README 的安装一节翻译成英文', 'For example: translate the installation section of the README into English'],
   createTicketSubmit: ['创建并派发', 'Create and dispatch'],
+  recentResults: ['最近结果', 'Recent results'],
+  noResults: ['近一天没有结束的工单；完成、合并或放弃的工单会出现在这里。', 'No ticket ended in the last day; completed, merged or dropped ones appear here.'],
   // Header, search, and tabs
   panel: ['Superagent', 'Superagent'],
   openMaster: ['打开主 Session', 'Open main Session'],

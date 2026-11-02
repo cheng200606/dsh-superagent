@@ -10,7 +10,7 @@ it('leads the overview with the pending Tickets, then problems, the last day and
   await mount()
   expect(tab(zh['tab.overview']).getAttribute('aria-selected')).toBe('true')
   expect(all('[role="tab"]').map(tab => tab.textContent)).toEqual(['概览', '来源', '触发', '评估', '执行', '设置'])
-  expect(all('.dt-section-title').map(title => title.textContent)).toEqual(['待处理工单2', '系统问题2', '过去 24 小时详情 ›', '执行器详情 ›'])
+  expect(all('.dt-section-title').map(title => title.textContent)).toEqual(['待处理工单2', '系统问题2', '过去 24 小时详情 ›', '最近结果0', '执行器详情 ›'])
   expect(all('.dt-cards .dt-ticket-stage').map(item => item.textContent)).toEqual(['待回答', '待处理失败'])
   expect(all('.dt-cards .dt-att-what').map(item => item.textContent)).toEqual(['飞书 来源异常', '评估未完成：这个文案好奇怪'])
   // Actions sit below the title and Threads, apart from the stage, each with its icon.
@@ -126,7 +126,7 @@ it('words a refused retry in the interface language by its code', async () => {
 it('shows the overview in English', async () => {
   await mount(en)
   expect(all('.dt-section-title').map(title => title.textContent)).toEqual([`${en.pendingTickets}2`, `${en.problems}2`,
-    `${en.lastDay}${en.details}`, `${en['term.executor']}${en.details}`])
+    `${en.lastDay}${en.details}`, `${en.recentResults}0`, `${en['term.executor']}${en.details}`])
   expect(all('.dt-cards .dt-ticket-stage').map(item => item.textContent)).toEqual([en['stage.answer'], en['stage.failed']])
   expect(all('.dt-stat-label').map(label => label.textContent)).toEqual([en.flowReceivedLabel, en.flowFilteredLabel, en.flowJudgedLabel,
     en.flowAcceptedLabel, en.executingLabel, en.queuedLabel, en.idleLabel])
@@ -156,4 +156,14 @@ it('says when no Source is on, an Eval is past its deadline or a message keeps f
   await click(tab(zh['tab.overview']))
   await click('评估超时未决定：#9 迟迟未决')
   expect(server.requests.some(request => request.path.startsWith('threads/github:9'))).toBe(true)
+})
+
+it('lists the tickets that ended in the last day as recent results, linking to the ended list', async () => {
+  server.tickets.ended = [{ ...server.tickets.ended[0]!, ended: { at: new Date().toISOString(), by: 'executor', outcome: 'completed' } }]
+  await mount()
+  expect(all('.dt-section-title').map(title => title.textContent)).toContain(`${zh.recentResults}1${zh.details}`)
+  const row = all('.dt-cards .dt-ticket-stage').map(item => item.textContent).at(-1)
+  expect(row).toContain('已完成')
+  await click(all('.dt-more-link').find(link => link.closest('.dt-section')?.querySelector('.dt-section-name')?.textContent === '最近结果')!)
+  expect(tab(zh['tab.execution']).getAttribute('aria-selected')).toBe('true')
 })

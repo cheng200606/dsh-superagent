@@ -24,11 +24,11 @@ const decision = (id: string, thread: string, when: string, fields: Partial<Deci
   ({ id, evalId: `eval-${id}`, threadKey: thread, triggerIds: [`tr-${id}`], policyVersion: 'v', at: when, kind: 'ignore',
     reason: [{ code: 'admission_ignored' }], strength: 'inferred', ...fields })
 const ticket = (id: string, when: string, fields: Partial<Ticket> = {}): Ticket => ({ id, title: `ticket ${id}`, decisionId: `dec-${id}`,
-  state: 'open', assignments: [], inputs: [], undelivered: [], createdAt: when, updatedAt: when,
+  assignments: [], inputs: [], undelivered: [], createdAt: when, updatedAt: when,
   origin: { triggerId: `tr-${id}`, triggerIds: [`tr-${id}`] }, channels: [], mandate: {} as Ticket['mandate'], ...fields })
 const thread = (key: string, fields: Partial<Thread> = {}): Thread =>
-  ({ key, ref: { source: 'feishu', id: key.slice('feishu:'.length) }, title: [], correlated: [], subscriptions: [], pending: [],
-    lastAt: at(1), ...fields })
+  ({ key, ref: { source: 'feishu', id: key.slice('feishu:'.length) }, createdAt: at(2), correlated: [], subscriptions: [], pending: [],
+    lastAt: at(1), meta: {}, ...fields })
 
 function store(): Store {
   directory = mkdtempSync(join(tmpdir(), 'orchestrator-retain-'))
@@ -64,7 +64,7 @@ it('keeps what an open ticket, a recent thread, or any ticket\'s origin names', 
     // An ended ticket's origin trigger stays even on an unprotected thread; its ticketless decision does not.
     db.threads.save(thread('feishu:idle', { lastAt: at(40) }))
     db.triggers.save(trigger('tr-ended-origin', at(40), ['feishu:idle']))
-    db.tickets.save(ticket('t-ended', at(40), { state: 'ended' as Ticket['state'], ended: { at: at(2), by: 'worker' as const, outcome: 'completed' as const },
+    db.tickets.save(ticket('t-ended', at(40), { ended: { at: at(2), by: 'executor' as const, outcome: 'completed' as const },
       origin: { triggerId: 'tr-ended-origin', triggerIds: ['tr-ended-origin'] } }))
     db.triggers.save(trigger('tr-stray', at(40), ['feishu:idle']))
     const deleted = db.retain(at(30))

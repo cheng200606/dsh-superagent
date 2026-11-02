@@ -68,12 +68,15 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
   const stats = Object.values(store.read.triggerStats(since))
   const received = stats.reduce((sum, item) => sum + item.received, 0), filtered = stats.reduce((sum, item) => sum + item.filtered, 0)
   const judgement = store.read.flow(since)
+  // The results of the last day, so a finished ticket reaches the operator's eye without the Execution page.
+  const ended = store.tickets.list().filter(ticket => ticket.ended && ticket.ended.at >= since).sort(newestFirst).slice(0, 8)
   return {
     problems,
     person: open.filter(ticket => ticketStage(ticket).stage === 'person').map(ticket => ticketRow(view, ticket)),
     executor: { ...load, maxWorkers: settings.executor.maxWorkers, idle: open.filter(ticket => ticketStage(ticket).stage === 'idle').length },
     flow: { received, filtered, triggers: received - filtered, judged: judgement.judged, accepted: judgement.accepted,
       evaluating: evaluating.length, dropped: store.read.droppedSince(since) },
+    results: ended.map(ticket => ticketRow(view, ticket)),
     policyVersion: policyVersionValue,
   }
 }

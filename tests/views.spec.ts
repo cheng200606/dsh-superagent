@@ -155,6 +155,18 @@ const load = { running: 0, queued: 0 }
 const problems = (host: ReturnType<typeof views>, health: Parameters<typeof overview>[1] = {}) =>
   overview(host, health, 'v1', load).problems
 
+it("lists the tickets that ended in the last day as the overview's results, newest first", () => {
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString()
+  const ended = (id: string, endedAt: string) => ({ id, title: id, decisionId: 'd', channels: [], undelivered: [], createdAt: at,
+    updatedAt: endedAt, ended: { at: endedAt, by: 'executor' as const, outcome: 'completed' as const },
+    mandate: { strength: 'explicit' as const, policyVersion: 'v', basis: { via: 'listed' as const }, actor: { source: 'feishu',
+      id: 'ou_alice' }, scope: '' },
+    origin: { triggerId: 'e0', triggerIds: ['e0'] }, assignments: [], inputs: [] })
+  store.tickets.save(ended('older', yesterday))
+  store.tickets.save(ended('newer', at))
+  expect(overview(views(), {}, 'v1', load).results.map(ticket => ticket.id)).toEqual(['newer'])
+})
+
 it('lists an Eval past its deadline, and as dsh-superagent\'s own errors only parts no Source or Policy sync reports', () => {
   const host = views()
   const evaluating = { id: 'e1', threadKey: 'github:1', triggerIds: ['t1'], strength: 'explicit' as const, actor: { source: 'github',
