@@ -1,5 +1,5 @@
 diff --git a/src/app/http.ts b/src/app/http.ts
-index 13c0115..84f8238 100644
+index 13c0115..ec61895 100644
 --- a/src/app/http.ts
 +++ b/src/app/http.ts
 @@ -11,6 +11,7 @@ import { PromptConflict, SKILL_NAME, SKILL_PREFIX, TEAM_SECTIONS, builtInBase, b
@@ -19,37 +19,40 @@ index 13c0115..84f8238 100644
    /** Resolves once startup finishes or setup determines what is still missing. */
    readonly ready: Promise<void>
    /** Resolved deployment; throws if read while waiting for setup (`!configured()`). */
-@@ -227,21 +230,49 @@ function match(table: Routes, method: string, segments: string[]) {
+@@ -227,21 +230,52 @@ function match(table: Routes, method: string, segments: string[]) {
    }
    return undefined
  }
 +/**
-+ * The management route, owned by the process rather than by one fiber. DSH's Web server keys its routes by
++ * The management route, owned by the Web server rather than by one fiber. DSH's Web server keys its routes by
 + * path: a second registration of the same path is refused, and its disposer removes the route by path rather
 + * than by identity. A fiber restart re-applies this plugin, and the new registration can run before the
 + * previous fiber's disposer; the new registration would then be refused as a duplicate, and the late disposer
 + * would remove the route — leaving the panel without its API until the whole process restarts. The route is
-+ * therefore registered once and kept: it answers with the runtime that is current, and a fiber that goes away
-+ * only gives its runtime back.
++ * therefore registered once per Web server and kept: it answers with the runtime that is current, and a fiber
++ * that goes away only gives its runtime back.
 + */
 +interface Management { runtime: HttpHost; table: ReturnType<typeof routes>; remove: () => void }
-+let management: Management | undefined
++/** One entry per Web server; the service instance is the same for every fiber of a host. */
++const managements = new WeakMap<object, Management>()
 +
  export function registerHttp(ctx: Context, runtime: HttpHost): () => void {
    if (ctx.webServer.host !== '127.0.0.1') throw new Error('Orchestrator management requires a loopback Web server')
 -  const table = routes(runtime)
 -  const disposers = [
 -    ctx.webServer.register({ kind: 'prefix', path: '/orchestrator', handler: async (req, res) => {
-+  if (management) {
++  const webServer = ctx.webServer
++  const existing = managements.get(webServer)
++  if (existing) {
 +    // A restart: the route stays and serves the runtime that is current now.
-+    management.runtime = runtime
-+    management.table = routes(runtime)
++    existing.runtime = runtime
++    existing.table = routes(runtime)
 +  } else {
 +    const remove = ctx.webServer.register({ kind: 'prefix', path: '/orchestrator', handler: async (req, res) => {
        const url = new URL(req.url ?? '/', 'http://localhost')
        if (!url.pathname.startsWith('/orchestrator/api/')) { res.writeHead(404); res.end(); return }
        if (!sameOrigin(req, ctx.webServer.port)) { json(res, 403, { error: 'Same-origin management request required' }); return }
-+      const current = management
++      const current = managements.get(webServer)
 +      if (!current) { json(res, 503, { error: 'dsh-superagent is not running' }); return }
        try {
 -        await runtime.ready
@@ -67,13 +70,13 @@ index 13c0115..84f8238 100644
 +        json(res, ...failure(error))
 +      }
 +    } })
-+    management = { runtime, table: routes(runtime), remove }
++    managements.set(webServer, { runtime, table: routes(runtime), remove })
 +  }
 +  return () => {
 +    // Another runtime took the route over: this disposer must not remove it.
-+    const current = management
++    const current = managements.get(webServer)
 +    if (current?.runtime !== runtime) return
-+    management = undefined
++    managements.delete(webServer)
 +    current.remove()
 +  }
  }
@@ -191,11 +194,101 @@ index 76340cb..49b94b5 100644
  /** Plugin configuration of the dsh-superagent entry. Volatile fields apply without a restart because dsh-superagent reads them on each use; changing `stateDir` remounts the plugin. */
  export const Config = s.object({
    stateDir: absolute('Directory for the database, locks, worker shims, the agent\'s git configuration and, by default, the ticket directories.').required(),
+diff --git a/src/infra/diagnostics.ts b/src/infra/diagnostics.ts
+new file mode 100644
+index 0000000..1095d26
+--- /dev/null
++++ b/src/infra/diagnostics.ts
+@@ -0,0 +1,74 @@
++/**
++ * The plugin's own record of what it did, kept next to its database.
++ *
++ * DSH runs as its own process, so its log lines do not reach the terminal that started it, and a
++ * diagnosis that depends on them is no diagnosis at all. This writes a bounded, append-only log that
++ * `local/scripts/diagnose.mjs` can read: one JSON object per line, oldest first.
++ */
++import { appendFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
++import { dirname } from 'node:path'
++
++/** The log keeps the most recent lines; older ones are dropped when it grows past this many. */
++const MAX_BYTES = 512 * 1024
++const MAX_LINES = 2000
++
++export interface DiagnosticEvent {
++  /** What happened, such as `start`, `setup` or `http-error`. */
++  event: string
++  /** When it happened. */
++  at?: string
++  /** Anything that explains it; never a credential. */
++  detail?: Record<string, unknown>
++}
++
++/** Writes the plugin's lifecycle to a file under the state directory. */
++export class Diagnostics {
++  private readonly path: string
++  private queued: Promise<void> = Promise.resolve()
++
++  constructor(path: string) {
++    this.path = path
++  }
++
++  /** The file the log is written to. */
++  get file(): string {
++    return this.path
++  }
++
++  /**
++   * Records one event. Writing is serialized and never rejects: a diagnosis that fails to write must
++   * not stop the service, and a lost line is better than a crashed request.
++   */
++  record(event: string, detail?: Record<string, unknown>): void {
++    const entry: DiagnosticEvent = { event, at: new Date().toISOString(), ...detail ? { detail } : {} }
++    this.queued = this.queued.then(() => this.append(JSON.stringify(entry))).catch(() => { /* The log is best effort. */ })
++  }
++
++  private async append(line: string): Promise<void> {
++    await mkdir(dirname(this.path), { recursive: true })
++    await appendFile(this.path, `${line}\n`, 'utf8')
++    await this.trim()
++  }
++
++  /** Keeps the log bounded: it drops the oldest lines once it grows past its limits. */
++  private async trim(): Promise<void> {
++    let size = -1
++    try { size = (await stat(this.path)).size } catch { return }
++    if (size <= MAX_BYTES) return
++    const lines = (await readFile(this.path, 'utf8')).split('\n').filter(Boolean)
++    const kept = lines.slice(-MAX_LINES)
++    await writeFile(this.path, kept.join('\n') + '\n', 'utf8')
++  }
++
++  /** The most recent events, oldest first; the last `count` of them. */
++  async recent(count = 50): Promise<DiagnosticEvent[]> {
++    let text = ''
++    try { text = await readFile(this.path, 'utf8') } catch { return [] }
++    const lines = text.split('\n').filter(Boolean).slice(-count)
++    const events: DiagnosticEvent[] = []
++    for (const line of lines) {
++      try { events.push(JSON.parse(line) as DiagnosticEvent) } catch { /* A torn line is skipped. */ }
++    }
++    return events
++  }
++}
 diff --git a/src/infra/environment.ts b/src/infra/environment.ts
-index b6d92c3..1c7a838 100644
+index b6d92c3..d82f0b7 100644
 --- a/src/infra/environment.ts
 +++ b/src/infra/environment.ts
-@@ -90,6 +90,14 @@ export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' |
+@@ -19,7 +19,8 @@ export const WORKER_COMMANDS: readonly string[] = ['gh', 'git', 'lark-cli']
+ export const workerBin = (stateDir: string): string => join(stateDir, 'worker-bin')
+ export const workerGitConfig = (stateDir: string): string => join(stateDir, 'worker-gitconfig')
+ const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
+-const gitQuote = (value: string): string => `"${value.replace(/[\\"]/g, char => `\\${char}`)}"`
++/** A git configuration value in double quotes: a backslash and a quote are escaped, as git reads them. */
++export const gitQuote = (value: string): string => `"${value.replace(/[\\"]/g, char => `\\${char}`)}"`
+ export const credentialHelper = (cli: string): string => `!${shellQuote(cli)} auth git-credential`
+ 
+ export function sameDirectory(a: string, b: string): boolean {
+@@ -90,6 +91,14 @@ export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' |
      await rename(temporary, join(dir, name))
      kept.add(name)
    }
@@ -210,7 +303,7 @@ index b6d92c3..1c7a838 100644
    const withoutShims = [
      `self=${shellQuote(dir)}`, 'rest=', 'IFS=:', 'set -f',
      'for entry in $PATH; do [ "$entry" = "$self" ] || rest="${rest:+$rest:}$entry"; done',
-@@ -97,10 +105,18 @@ export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' |
+@@ -97,10 +106,18 @@ export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' |
    ].join('\n')
    const run = (program: string): string => `${withoutShims}\nexec ${shellQuote(program)} "$@"`
    const fail = (message: string): string => `echo ${shellQuote(message)} >&2\nexit 1`
@@ -229,6 +322,28 @@ index b6d92c3..1c7a838 100644
    }
    for (const name of before) if (!kept.has(name)) await unlink(join(dir, name))
    await own(workerGitConfig(stateDir), [
+diff --git a/src/infra/paths.ts b/src/infra/paths.ts
+index c7d1d24..b2e9c2f 100644
+--- a/src/infra/paths.ts
++++ b/src/infra/paths.ts
+@@ -1,6 +1,6 @@
+ /** Resolves packaged asset paths from either the source tree or the compiled lib/ output. */
+ import { existsSync, readFileSync } from 'node:fs'
+-import { dirname, join } from 'node:path'
++import { dirname, join, resolve } from 'node:path'
+ import { fileURLToPath } from 'node:url'
+ 
+ let cached: string | undefined
+@@ -17,4 +17,8 @@ export function packageRoot(): string {
+   }
+   throw new Error('dsh-superagent package root not found')
+ }
+-export const packagePath = (...parts: string[]): string => join(packageRoot(), ...parts)
++/**
++ * The path of a packaged asset. `resolve` rather than `join`: a caller may name an absolute path, and
++ * joining it onto the package root would produce a path that starts with the root twice.
++ */
++export const packagePath = (...parts: string[]): string => resolve(packageRoot(), ...parts)
 diff --git a/src/policy.ts b/src/policy.ts
 index b6a66cf..685c3e9 100644
 --- a/src/policy.ts

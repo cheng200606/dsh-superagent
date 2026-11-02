@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { posixOnly } from './portable.ts'
 import { z } from 'zod'
 import { CliError, Commands, commandError } from '../src/infra/commands.ts'
 import { feishuKind } from '../src/sources/feishu.ts'
@@ -169,7 +170,7 @@ it('says how to add the bot to a chat when Feishu answers that it is not a membe
   run.mockResolvedValueOnce(JSON.stringify({ ok: false, error: { code: 232011, message: 'operator is not in the chat' } }))
   await expect(commands.lark(['im', '+chat-members-list'])).rejects.toMatchObject({ message: hint, code: 232011 })
 })
-it('names only the program and how it ended when a command prints no diagnostics, never its arguments', async () => {
+posixOnly('names only the program and how it ended when a command prints no diagnostics, never its arguments', async () => {
   const commands = new Commands(() => deployment, {}, new AbortController().signal)
   const secret = 'secret reply text'
   await expect(commands.run('sh', ['-c', 'exit 3', secret])).rejects.toMatchObject({ message: 'sh exited with code 3', exitCode: 3 })

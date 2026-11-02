@@ -33,6 +33,17 @@
 | 8 | `src/app/runtime.ts:166-172` | 启动失败没有任何日志，只表现为 404/400 | `initialize()` 的失败只变成 `this.ready` 的未处理 rejection | 失败时写一条 `ctx.logger.error`，并继续拒绝 `ready` |
 | 9 | `src/infra/diagnostics.ts`（新增）+ `src/app/runtime.ts`、`src/app/http.ts` | 宿主进程独立运行，日志行到不了启动它的终端，排查只能靠猜 | 插件没有自己的记录 | 插件把生命周期写进 `<stateDir>/diagnostics.log`（每行一个 JSON，有界）；`local/scripts/diagnose.mjs` 读它并给出结论 |
 | 10 | `local/scripts/supervisor.mjs`（新增） | 官方服务脚本依赖 tmux（Windows 没有），且 `dsh.cmd` 实际拉起的是 `DeepSeek Harness.exe`，杀掉 shell 包装不会杀掉宿主 | 没有进程托管 | 守护脚本直接持有宿主进程（`ELECTRON_RUN_AS_NODE=1`），负责启动、崩溃自愈、停止与锁清理；分别记录守护与宿主的 pid |
+| 11 | `src/infra/paths.ts` | 传入绝对路径时得到 `…\prompts\C:\Users\…\x.md` | `join` 不把绝对路径当作绝对路径 | 改用 `resolve`，它遇到绝对路径就以它为准 |
+| 12 | `tests/portable.ts`（新增）+ `tests/docs.spec.ts`、`tests/runtime.spec.ts`、`tests/store.spec.ts`、`tests/commands.spec.ts`、`tests/service-script.spec.ts`、`tests/sources.spec.ts`、`tests/environment.spec.ts`、`tests/deployment.spec.ts` | Windows 上 41 个用例失败 | 测试假定 POSIX：符号链接、文件模式位、可执行脚本、信号、tmux，以及路径分隔符与行尾 | 便宜的直接修（分隔符、CRLF、git 引号、绝对路径）；确实需要 POSIX 的显式跳过并写明原因 |
+
+### 补丁 12 之后的状态
+
+```
+Test Files  58 passed | 1 skipped (59)
+     Tests  1163 passed | 34 skipped (1197)
+```
+
+34 个跳过的用例分属四类：tmux 服务脚本（15）、飞书事件消费者（写并运行 shell 脚本）、worker shim 的执行（POSIX sh 脚本）、POSIX 文件模式与信号。它们在 Linux 上照常运行。
 
 ### 关于补丁 10 踩到的三个坑
 
