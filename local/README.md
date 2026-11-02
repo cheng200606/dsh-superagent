@@ -12,6 +12,10 @@
 | `scripts/diagnose.mjs` | 一键诊断：采集 fork 状态、profile、state 目录、端口、API、插件日志，并给出结论 |
 | `scripts/supervisor.mjs` | 进程守护：直接持有 DSH 宿主进程，负责启动、崩溃自愈、停止与锁清理（替代依赖 tmux 的官方脚本） |
 | `scripts/dsh-superagent-config.mjs` | 配置写入：GitHub 源、本地目录源、webhook 源、策略白名单与执行器设置（prepare 走 ghfast.top 镜像取代码） |
+
+## 发布
+
+`v0.1.0-fork.1`：功能清单与验证记录见 [GitHub Release](https://github.com/cheng200606/dsh-superagent/releases/tag/v0.1.0-fork.1)。发布步骤：`git tag -a v0.1.0-fork.N && git push origin v0.1.0-fork.N`，然后用 gh CLI 建 Release（本机用 `GH_CONFIG_DIR=C:/Users/26825/.config/gh-agent` 指向已登录的 gh 配置）。
 | `scripts/verify-restart-survival.mjs` | 验收脚本：验证管理 API 在配置保存引发的 fiber 重启前后始终可用 |
 
 ## 本机触发源与手动建单（本 fork 新增）
@@ -48,6 +52,15 @@ curl -X POST -H "x-webhook-request: 1" -H "content-type: application/json"   -d 
 - 中文注意：从 Windows 命令行内联传中文会被本地代码页搞乱——把 JSON 写进 UTF-8 文件用 `--data-binary @file` 发。
 
 实现见 `src/sources/webhook.ts`（bundle 插件 `./webhook-watch`）。
+
+### 外部请求者路径（需要第二个 GitHub 账号时）
+
+上游设计假设"专用 agent 账号"；本机只有操作者一个账号时，靠自提及白名单收窄放行已验证。要用一个**真正的外部请求者**验证完整路径：
+
+1. 注册第二个 GitHub 账号（或用一位同事的），并让其在 `cheng200606/dsh-plugin-codemap` 开一个 issue，正文 `@cheng200606 请只回复确认收到，不要修改代码。`
+2. 无需改任何配置：该账号不在 `policy.sources.github.allowed` 里，其 **@提及** 按 `unlistedAddressed` 单元格的默认（`ignore`）被拒——这是刻意的准入边界。
+3. 要放行它，在面板 设置 → 策略 把该账号加进 GitHub 源的允许名单（或点"同步"维护外部名册）；随后该账号的 @提及即为 explicit 工单。
+4. 观察点：工单的授权详情里 `sender`/`via: addressed` 应显示该账号；agent 以 `cheng200606` 身份回帖，外部账号收到回复——这就是"外部请求者 → agent → 外部可见结果"的完整回路。
 
 ### 面板手动建单
 

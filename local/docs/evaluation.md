@@ -22,7 +22,11 @@
 | **能力探测层（技术债 #1 的通用解）** | ✅ | 启动向 `diagnostics.log` 记录 `capabilities`（本机探测到 `shells: ["pwsh"]`——按"参数里有 command 字符串"的形状识别，非写死名字）；`restrict` 只留作用域真正暴露的工具；`ctx.get` 容错探测 jobs/subagents 服务 |
 | **数据保留（技术债 #8）** | ✅ | `Store.retain`：每小时清一次超过保留期（机器配置 `retentionDays`，默认 30 天，0 为永久）且未产生工单的 Trigger/处置/ignore 决策；有开放工单或近期活动的线程、任何工单引用的原始触发都保留；删除量记入插件日志，实机验证运行且数据完好 |
 | **升级备份与回滚（阶段 3 验收 #2）** | ✅ | schema 迁移前 `VACUUM INTO` 写一致性副本 `orchestrator.sqlite.backup-v<版本>`；回滚 = 关宿主、用副本替换库文件（测试覆盖副本内容与再迁移） |
-| 多仓支持 / 通知回路（阶段 4，可选项） | ⬜ | 未开始 |
+| **通知回路（P1）** | ✅ | 主 Session 侧本已闭环（ready/blocked/failed/waiting 报告走 steering 中继 `reportRelay`，每次结束注入回执 `eventNotice`——测试断言在 runtime.spec/tools.spec）；本轮补上面板半环：概览新增**最近结果**，过去 24 小时结束的工单直达（实机返回 4 条，含 webhook/手动建单验证件） |
+| 对外发布 | ✅ | 标签与 Release `v0.1.0-fork.1`（含功能清单与验证记录）；1201 通过 / 34 POSIX 跳过 / 0 失败 |
+| 多仓支持 | ⬜ | 未开始（领域模型按 repository 切分，主要是 GitHub 源配置与 setup 验证的扩展） |
+| 第二个 agent 账号实测 | ⬜ | 需要操作者提供第二个 GitHub 账号；实测步骤已写入 `local/README.md` |
+| 连续 7 天无人值守（阶段 1 验收 #1） | ⏳ | 时间门控：守护进程自愈机制已验证，自 2026-11-02 起由 supervisor 持有运行 |
 
 **过程中发现并修掉的上游缺陷**（均可独立回馈上游）：
 
