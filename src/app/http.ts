@@ -227,21 +227,46 @@ function match(table: Routes, method: string, segments: string[]) {
   }
   return undefined
 }
+/**
+ * The management route, owned by the process rather than by one fiber. DSH's Web server keys its routes by
+ * path: a second registration of the same path is refused, and its disposer removes the route by path rather
+ * than by identity. A fiber restart re-applies this plugin, and the new registration can run before the
+ * previous fiber's disposer; the new registration would then be refused as a duplicate, and the late disposer
+ * would remove the route — leaving the panel without its API until the whole process restarts. The route is
+ * therefore registered once and kept: it answers with the runtime that is current, and a fiber that goes away
+ * only gives its runtime back.
+ */
+interface Management { runtime: HttpHost; table: ReturnType<typeof routes>; remove: () => void }
+let management: Management | undefined
+
 export function registerHttp(ctx: Context, runtime: HttpHost): () => void {
   if (ctx.webServer.host !== '127.0.0.1') throw new Error('Orchestrator management requires a loopback Web server')
-  const table = routes(runtime)
-  const disposers = [
-    ctx.webServer.register({ kind: 'prefix', path: '/orchestrator', handler: async (req, res) => {
+  if (management) {
+    // A restart: the route stays and serves the runtime that is current now.
+    management.runtime = runtime
+    management.table = routes(runtime)
+  } else {
+    const remove = ctx.webServer.register({ kind: 'prefix', path: '/orchestrator', handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
       if (!url.pathname.startsWith('/orchestrator/api/')) { res.writeHead(404); res.end(); return }
       if (!sameOrigin(req, ctx.webServer.port)) { json(res, 403, { error: 'Same-origin management request required' }); return }
+      const current = management
+      if (!current) { json(res, 503, { error: 'dsh-superagent is not running' }); return }
       try {
-        await runtime.ready
-        const route = match(table, req.method ?? 'GET', url.pathname.slice('/orchestrator/api/'.length).split('/'))
+        await current.runtime.ready
+        const route = match(current.table, req.method ?? 'GET', url.pathname.slice('/orchestrator/api/'.length).split('/'))
         if (!route) throw new RouteError(404, 'Unknown operation')
         const query = Object.fromEntries(url.searchParams)
         json(res, 200, await route.run({ params: route.params as never, query, body: maxBytes => readBody(req, maxBytes) }))
       } catch (error) { json(res, ...failure(error)) }
-    } })]
-  return () => { for (const dispose of disposers) dispose() }
+    } })
+    management = { runtime, table: routes(runtime), remove }
+  }
+  return () => {
+    // Another runtime took the route over: this disposer must not remove it.
+    const current = management
+    if (current?.runtime !== runtime) return
+    management = undefined
+    current.remove()
+  }
 }

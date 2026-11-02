@@ -163,7 +163,12 @@ export class Runtime extends Service implements SourceHost {
         get github() { return runtime.context({ kind: 'github', health: ['github'] }) },
         requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
         quietly: run => { this.quiet++; try { return run() } finally { this.quiet-- } } }
-      this.ready = this.initialize()
+      // A failure here would otherwise only surface as an unhandled rejection: the panel would answer
+      // 404 or 500 without the log naming the cause.
+      this.ready = this.initialize().catch((error: unknown) => {
+        ctx.logger.error('dsh-superagent failed to start: %s', String(error))
+        throw error
+      })
     } catch (error) {
       // Release the database and state lock if initialization fails so an in-process restart can reacquire them.
       try { opened?.close() } finally { release() }

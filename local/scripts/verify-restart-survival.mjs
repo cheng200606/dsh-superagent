@@ -31,6 +31,13 @@ async function saveCli(cli) {
   return answer
 }
 
+/** The CLI path spelling that differs from the one saved now, so the save counts as a setup change. */
+async function otherCliSpelling() {
+  const settings = (await api('/settings')).body
+  const github = settings.sources.find(source => source.id === 'github')
+  return github.value.config.cli === CLI_FORWARD ? CLI_BACKWARD : CLI_FORWARD
+}
+
 /** Polls the state endpoint and reports every status code it saw. */
 async function watch(seconds, label) {
   const seen = []
@@ -46,21 +53,21 @@ async function watch(seconds, label) {
     await new Promise(resolve => setTimeout(resolve, 2000))
   }
   const unique = [...new Set(seen)]
-  const alive = unique.filter(code => code === '200').length
+  const alive = seen.filter(code => code === '200').length
   console.log(`${label}: ${alive}/${seen.length} 次探测返回 200；出现过的状态码：${unique.join(', ')}`)
   return { alive, total: seen.length, unique }
 }
 
 console.log('--- 保存一个等价的 CLI 路径写法，触发 fiber 重启')
-const first = await saveCli(CLI_BACKWARD)
+const first = await saveCli(await otherCliSpelling())
 console.log('  保存结果:', JSON.stringify(first.body))
 if (first.body?.restarting !== true) {
   console.log('  未触发重启（restarting 不为 true），无法验证；检查设置是否真的变化。')
   process.exitCode = 1
 } else {
   const during = await watch(45, '  重启期间')
-  console.log('--- 恢复原路径，再触发一次重启')
-  const second = await saveCli(CLI_FORWARD)
+  console.log('--- 换回另一种写法，再触发一次重启')
+  const second = await saveCli(await otherCliSpelling())
   console.log('  保存结果:', JSON.stringify(second.body))
   const after = await watch(30, '  第二次重启期间')
   const failures = [...during.unique, ...after.unique].filter(code => code !== '200')

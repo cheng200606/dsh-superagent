@@ -29,6 +29,32 @@
 | 4 | `src/app/sessions.ts:263-266` | 插件不激活：`tools.restrict() names unknown global tool "bash"` | 工具名写死 | 白名单改为按 `tools.get(name, scopeParentOf(agent))` 过滤（本文件 `workOnly` 已用同一写法）；`noWait` 守卫同时识别 `pwsh` |
 | 5 | `src/sources/github.ts:158-175` | 删除 issue 后源持续 `error` 达 24 小时 | 只把 HTTP 410 当作"线程已消失" | 新增 `gone()`：404 时先读一次仓库本身（`commands.api('')`），仓库仍可读即判定线程已消失，按 dropped 而非 failed 处理 |
 | 6 | `src/sources/github.ts:243,399` + `src/sources/github-trigger.ts:62-72` | 单账号部署下**永远无法触发** | 原型跳过 agent 自己发布的内容（防自触发环），且这类内容 `human: false` 会被 `not_human` 拒绝 | 收窄放行：**自己发布且明确 @ 了 agent** 的评论才被接收，并按人类请求计入 |
+| 7 | `src/app/http.ts:230-277` | 保存设置后管理 API 永久 404，必须重启整个 DSH 进程 | 宿主的 Web server 按**路径**存路由：重复注册抛错，disposer 也按路径删除。fiber 重启时新注册可能先于旧 disposer 执行 → 新注册被拒、旧 disposer 删掉路由 | 路由改为**进程级持有**：只注册一次，重启时换入当前 runtime 并重建路由表；旧 fiber 的 disposer 发现 runtime 已被接管则不删路由 |
+| 8 | `src/app/runtime.ts:166-172` | 启动失败没有任何日志，只表现为 404/400 | `initialize()` 的失败只变成 `this.ready` 的未处理 rejection | 失败时写一条 `ctx.logger.error`，并继续拒绝 `ready` |
+
+### 关于补丁 7 的机制
+
+宿主 `webserver.register` 的实现是：
+
+```js
+register(route) {
+  const table = route.kind === "exact" ? this.exact : this.prefixes
+  if (table.has(route.path)) throw new Error(`webserver: duplicate ${route.kind} route "${route.path}"`)
+  table.set(route.path, route)
+  return () => { table.delete(route.path) }   // ← 按路径删，不按身份
+}
+```
+
+fiber 重启时，旧 fiber 的 disposer 与新 fiber 的注册谁先执行并不确定：
+
+- **新注册先执行** → `table.has('/orchestrator')` 为真 → 抛 duplicate → 新 Runtime 初始化失败 → 随后旧 disposer 按路径删掉路由 → **永久 404**；
+- **旧 disposer 先执行** → 路由先被删 → 新注册成功 → 一切正常。
+
+这解释了为什么现象是"有时正常、有时永久 404"。补丁把路由的所有权从"某个 fiber"移到"进程"：路由只注册一次，重启时只替换它服务的 runtime；旧 fiber 的 disposer 通过 runtime 身份判断自己是否已被接管。
+
+> 踩过的坑：不能用 `ctx.webServer` 作为"是否同一个宿主"的键——它是每个 context 的代理，跨 fiber 不是同一对象，早期版本因此没能找到旧注册。
+
+**验收**：`local/scripts/verify-restart-survival.mjs` 保存一个等价的 CLI 路径写法触发真实重启，并在重启期间每 2 秒探测一次管理 API。修复前 API 永久 404；修复后两次重启分别 23/23 与 15/15 次探测全部返回 200。
 
 ### 关于补丁 6 的安全性
 
