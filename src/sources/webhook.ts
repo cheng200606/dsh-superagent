@@ -205,7 +205,8 @@ export function registerWebhook(ctx: Context, source: SourceContext): () => void
 }
 
 export const name = 'dsh-superagent-webhook'
-export const inject = ['orchestrator']
+// The endpoint sits on the host's Web server, and the Source protocol comes from the orchestrator.
+export const inject = ['orchestrator', 'webServer']
 export function apply(ctx: Context): void {
   ctx.effect(() => ctx.orchestrator.sources.register(webhookKind), 'webhook: source kind')
   ctx.effect(() => {

@@ -8,18 +8,18 @@
 
 ## 〇、实施进展（2026-11-02 起，接管式加固）
 
-本评估的阶段 1 已全部完成并推送；阶段 2 的第一个来源已完成。
+阶段 1 已全部完成；阶段 2 全部完成；阶段 3 的能力探测层也已完成（2026-11-03）。
 
 | 项 | 状态 | 证据 |
 | --- | --- | --- |
 | 配置热重载修复（技术债 #5） | ✅ | 管理路由改为按 Web server 持有；重启期间 23/23 与 15/15 次探测返回 200（修复前永久 404） |
 | 一键诊断包 | ✅ | 插件写 `<stateDir>/diagnostics.log`，`local/scripts/diagnose.mjs` 采集并给结论；停服时准确指出端口、API 与残留锁 |
 | 进程守护（技术债 #7） | ✅ | `local/scripts/supervisor.mjs` 直接持有宿主进程；杀宿主 5 秒内自愈，停止时释放端口并清锁 |
-| Windows 测试基建 | ✅ | 41 失败 → 0 失败；1168 通过 / 34 个 POSIX 用例显式跳过；类型检查干净 |
+| Windows 测试基建 | ✅ | 41 失败 → 0 失败；1194 通过 / 34 个 POSIX 用例显式跳过；类型检查干净 |
 | **本地目录 Source** | ✅ | 放一个文件进 `C:/Users/26825/tasks` → 生成 explicit 工单 → 独立 worker 会话 → 答案写入 `hello.reply.md` |
-| 面板手动建单 | ⬜ | 未开始 |
-| 简单 webhook 源 | ⬜ | 未开始 |
-| 能力探测层（技术债 #1 的通用解） | ⬜ | 未开始 |
+| **本地 Webhook Source** | ✅ | `POST /orchestrator/webhook`（回环 + 可选令牌）→ explicit 工单 → worker → completed；同 `key` 重发判 `duplicate`；UTF-8 全链路无乱码 |
+| **面板手动建单** | ✅ | 执行页"新建工单"表单 / `POST /orchestrator/api/tickets` → 立即 accept 建单派发；worker 回报"中文无 U+FFFD 乱码，完整到达" |
+| **能力探测层（技术债 #1 的通用解）** | ✅ | 启动向 `diagnostics.log` 记录 `capabilities`（本机探测到 `shells: ["pwsh"]`——按"参数里有 command 字符串"的形状识别，非写死名字）；`restrict` 只留作用域真正暴露的工具；`ctx.get` 容错探测 jobs/subagents 服务 |
 | 多仓 / 数据回收 / 通知回路 | ⬜ | 未开始 |
 
 **过程中发现并修掉的上游缺陷**（均可独立回馈上游）：
@@ -29,6 +29,7 @@
 3. 管理路由在 fiber 重启后丢失（宿主按路径存路由，disposer 也按路径删）。
 4. 文档测试在 CRLF 检出下读不到标题行；模块表比较忽略路径分隔符。
 5. Source 配置的默认值必须自身可解析——否则注册表创建的默认实例会让整个 `/settings` 端点 400。
+6. `src/executor/background.ts` 用 `ctx.get('jobs')` 读可选服务——宿主没有该服务时会直接抛错（"没有该服务则没有"的实现是反的）；已改为 `ctx.get('jobs', false)`。
 
 ---
 

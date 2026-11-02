@@ -18,10 +18,14 @@ const CLONE = 'C:/Users/26825/src/widgets'
 /** The folder the local directory Source watches; a file dropped in is a request. */
 const WATCHED = 'C:/Users/26825/tasks'
 const LOCAL_ACTOR = 'local'
+/** The webhook Source speaks for this sender id; programs POST requests to the loopback endpoint. */
+const WEBHOOK_ACTOR = 'webhook'
+/** Direct github.com is unreachable from this machine at times; the read-only mirror proxies fetches. */
+const MIRROR = 'https://ghfast.top/https://github.com'
 
 /** The command that gives each ticket its own worktree of the repository. */
 const PREPARE = [
-  `git -C ${CLONE} fetch --no-tags "https://github.com/$DSH_SUPERAGENT_GITHUB_REPOSITORY.git" "\${DSH_SUPERAGENT_GITHUB_PR_HEAD:-HEAD}:refs/dsh-superagent/$DSH_SUPERAGENT_TICKET"`,
+  `git -C ${CLONE} fetch --no-tags "${MIRROR}/$DSH_SUPERAGENT_GITHUB_REPOSITORY.git" "\${DSH_SUPERAGENT_GITHUB_PR_HEAD:-HEAD}:refs/dsh-superagent/$DSH_SUPERAGENT_TICKET"`,
   `&& git -C ${CLONE} worktree add -b "agent/$DSH_SUPERAGENT_NAME" "$DSH_SUPERAGENT_DIR" "refs/dsh-superagent/$DSH_SUPERAGENT_TICKET"`,
 ].join(' ')
 
@@ -91,13 +95,14 @@ const githubConfig = { ...github.value.config, repository: REPOSITORY, cli: CLI 
 if (process.env.OBSERVE_COMMENTS === '1') githubConfig.observeComments = true
 const localdir = settings.sources.find(source => source.id === 'localdir')
 const localdirConfig = { ...(localdir?.value.config ?? {}), directory: WATCHED, suffix: '.md', actor: LOCAL_ACTOR, pollSeconds: 10 }
-// The local directory Source sends as its actor, so the Policy must allow that id.
+// The local directory Source sends as its actor, so the Policy must allow that id; so must the webhook sender.
 const policy = {
   ...settings.blocks.policy.value,
   sources: {
     ...settings.blocks.policy.value.sources,
     github: { allowed: ALLOWED.map(id => ({ id })), bots: [] },
     localdir: { allowed: [{ id: LOCAL_ACTOR }] },
+    webhook: { allowed: [{ id: WEBHOOK_ACTOR }] },
   },
 }
 const executor = { ...settings.blocks.executor.value, prepare: PREPARE }
@@ -106,6 +111,8 @@ const wanted = process.argv.slice(2)
 const blocks = [
   { name: 'source:github', label: 'source:github', value: { enabled: true, config: githubConfig } },
   { name: 'source:localdir', label: 'source:localdir', value: { enabled: true, config: localdirConfig } },
+  // The webhook Source's config is just its optional shared token and sender; it is enabled by default.
+  { name: 'source:webhook', label: 'source:webhook', value: { enabled: true, config: { token: '', actor: WEBHOOK_ACTOR } } },
   { name: 'policy', label: 'policy', value: policy },
   { name: 'executor', label: 'executor', value: executor },
 ].filter(block => !wanted.length || wanted.includes(block.name))

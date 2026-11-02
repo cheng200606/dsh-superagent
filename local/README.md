@@ -11,14 +11,16 @@
 | `patches/dsh-superagent-windows-host.patch` | 可重放补丁：对干净上游 `git apply` 校验通过 |
 | `scripts/diagnose.mjs` | 一键诊断：采集 fork 状态、profile、state 目录、端口、API、插件日志，并给出结论 |
 | `scripts/supervisor.mjs` | 进程守护：直接持有 DSH 宿主进程，负责启动、崩溃自愈、停止与锁清理（替代依赖 tmux 的官方脚本） |
-| `scripts/dsh-superagent-config.mjs` | 配置写入：GitHub 源、本地目录源、策略白名单与执行器设置 |
+| `scripts/dsh-superagent-config.mjs` | 配置写入：GitHub 源、本地目录源、webhook 源、策略白名单与执行器设置（prepare 走 ghfast.top 镜像取代码） |
 | `scripts/verify-restart-survival.mjs` | 验收脚本：验证管理 API 在配置保存引发的 fiber 重启前后始终可用 |
 
-## 本地目录 Source（本 fork 新增）
+## 本机触发源与手动建单（本 fork 新增）
 
-原型的触发源只有 GitHub 与飞书。本 fork 加了第三个：**本地目录**——监视一个文件夹，放进去的文件就是请求，答案写在同名 `.reply.md` 旁。
+原型的触发源只有 GitHub 与飞书，且没有手动入口。本 fork 加了三种"不碰 GitHub 也能派活"的方式。
 
-它不需要账号、令牌、网络或任何外部程序，是最短的"想法 → 工单"路径，也是没有第二个 GitHub 账号时验证整条链路的办法。
+### 本地目录 Source
+
+监视一个文件夹，放进去的文件就是请求，答案写在同名 `.reply.md` 旁。不需要账号、令牌、网络或任何外部程序。
 
 ```bash
 # 1. 监视 C:/Users/26825/tasks（写入 source:localdir 与策略白名单）
@@ -30,7 +32,32 @@ echo "把 README 的第一段翻译成英文" > C:/Users/26825/tasks/translate.m
 # 3. 约 10 秒后面板出现工单，答案写在 C:/Users/26825/tasks/translate.reply.md
 ```
 
-实现见 `src/sources/localdir.ts`，按 `docs/008-cookbook.md` 的配方写成独立的 bundle 插件（`./localdir-watch`），配置块为 `source:localdir`，策略白名单里需要 `local` 这个发送者。
+### 本地 Webhook Source
+
+本机程序向回环端点 POST 一份请求即派活——IDE 任务、CI 步骤、脚本、计划任务都行：
+
+```bash
+curl -X POST -H "x-webhook-request: 1" -H "content-type: application/json"   -d '{"text":"跑一遍测试并把失败项列出来","key":"ci-42"}'   http://127.0.0.1:3082/orchestrator/webhook
+```
+
+- `x-webhook-request: 1` 头必须有：它让浏览器网页无法跨站触达端点（自定义头会触发预检，端点不应答预检）。
+- `key` 可选：带上它，重发同 key 判 `duplicate`（幂等）；不带则每次 POST 都是新请求。
+- 配置块 `source:webhook` 可设共享令牌（`x-webhook-token` 头，常量时间比较）。
+- 应答 `202 {status, trigger_id, thread}`；`status` 是引擎的收件结果（`stored`/`duplicate`/`filtered`）。
+- 工单结果没有回程通道：调用方轮询 `GET /orchestrator/api/tickets?state=open` 或看面板。
+- 中文注意：从 Windows 命令行内联传中文会被本地代码页搞乱——把 JSON 写进 UTF-8 文件用 `--data-binary @file` 发。
+
+实现见 `src/sources/webhook.ts`（bundle 插件 `./webhook-watch`）。
+
+### 面板手动建单
+
+执行页（Execution）有"新建工单"按钮：填一句话请求即建单并立即派发，等价于一条显式请求。程序化入口是管理 API：
+
+```bash
+curl -X POST -H "x-orchestrator-request: 1" -H "content-type: application/json"   -d '{"text":"把 README 的安装一节翻译成英文","title":"翻译 README"}'   http://127.0.0.1:3082/orchestrator/api/tickets
+```
+
+`title` 可选（默认取请求第一行）；工单的目录名从标题的英文词推导。操作者的准入身份是内置的 `manual` Source kind，其策略名单由同步机制始终保留 `operator`，无需配置。实现见 `src/app/manual.ts`。
 
 ## 运维命令
 
