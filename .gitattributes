@@ -1,0 +1,6 @@
+# Keep line endings predictable across platforms: the repository stores LF and
+# checks out the platform's default, except for files whose exact bytes matter.
+* text=auto
+
+# A patch file is applied as bytes; converting its line endings breaks `git apply`.
+local/patches/*.patch -text
