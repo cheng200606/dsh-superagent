@@ -2,10 +2,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { MessageId } from '@deepseek-ai/dsh-llm'
-import { scopeParentOf } from '@deepseek-ai/dsh-scope'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { dirname } from 'node:path'
 import { z } from 'zod'
+import { isShellTool, masterAllow, restrictAllow, workerAllow } from './capabilities.ts'
 import { key, liveTicket, type Ticket } from '../core/index.ts'
 import { mandateInstructions, ticketOfSession } from '../executor/dsh.ts'
 import type { HealthEntry } from '../infra/health.ts'
@@ -52,14 +52,6 @@ declare module '@deepseek-ai/cordis' {
     'agent-preset/selected'(sessionId: string, agentPreset: string): void
   }
 }
-/**
- * The DSH tools an Executor Session works with: files, search, the shell and its jobs, the web, skills, its todo list and
- * subagents. It gets no other tool the profile has, whenever it was registered: none that asks or shows a person something,
- * changes the profile, schedules work or starts goals outside the worker slots, the pause and a person's hold, starts or
- * messages other Sessions, or edits documents.
- */
-const WORK_TOOLS = ['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'web_search',
-  'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent']
 /** What the main Session is told when it would wait: what it waits for comes to it, and a waiting step holds back the next. */
 const NO_WAIT = 'Reports, follow_up notices, new candidates and a background job\'s end with its output arrive by themselves as messages; '
   + 'end the turn instead of waiting for them.'
@@ -69,14 +61,16 @@ const DEFAULT_WAIT = 'This shell waits up to 60 seconds by default: pass timeout
 /** `sleep` at a command position: the start, after ; & | ( { ! ` or a newline, or after a keyword or a command that runs it. */
 const SLEEP = /(?:^|[;&|({!`\n]|\b(?:do|then|else|elif|if|while|until|time|exec|nohup|command|env)\s)\s*(?:\S*\/)?sleep\b/
 /**
- * The main Session's guard: it refuses a bash command that runs sleep or asks to hold the step longer than 30 seconds, and a
+ * The main Session's guard: it refuses a shell command that runs sleep or asks to hold the step longer than 30 seconds, and a
  * job wait longer than 5 seconds. Under `standard`, as a main Session created before the router preset runs, the shell holds
  * a command 60 seconds and a job wait lasts 30 seconds by default, so a command needs a timeout or the background, and a
- * job wait its timeout; the router preset ends both after 5 seconds.
+ * job wait its timeout; the router preset ends both after 5 seconds. The shell is whichever tool this Session's scope
+ * resolves as a command runner (`isShellTool`), so a host that renames it keeps the caps.
  */
-function noWait({ name, arguments: input }: { name: string; arguments: unknown }, routed: () => boolean): string | undefined {
+function noWait({ name, arguments: input }: { name: string; arguments: unknown }, isShell: (name: string) => boolean,
+  routed: () => boolean): string | undefined {
   const args = (input ?? {}) as { command?: unknown; timeoutMs?: unknown; run_in_background?: unknown; wait?: unknown; timeout_ms?: unknown }
-  if (name === 'bash' || name === 'pwsh') {
+  if (isShell(name)) {
     const sleeps = typeof args.command === 'string' && SLEEP.test(args.command)
     if (sleeps || typeof args.timeoutMs === 'number' && args.timeoutMs > 30_000) return NO_WAIT
     if (args.timeoutMs === undefined && args.run_in_background !== true && !routed()) return DEFAULT_WAIT
@@ -260,12 +254,10 @@ export class Sessions {
     const register = this.registerTool(agent, binding)
     for (const tool of host.tools(agent, ticket)) register(tool.name, tool.description, tool.schema, tool.execute)
     if (master) {
-      // A DSH build names its shell tool differently: an earlier one had `bash`, this one has `pwsh`.
-      // DSH refuses a restriction that names a tool it does not know, so keep only the tools this host exposes.
-      const parent = scopeParentOf(agent)
-      const allow = ['skill', 'bash', 'pwsh', 'read', 'read_image', 'job_output', 'job_list', 'job_kill'].filter(name => agent.ctx.tools.get(name, parent))
-      binding.disposers.push(agent.ctx.tools.restrict({ allow }),
-        agent.ctx.tools.guard(execution => noWait(execution, () => this.routed(agent))))
+      // The tools the host actually exposes, with a renamed shell found by its parameters (see capabilities.ts).
+      const { allow, detected } = masterAllow(agent)
+      binding.disposers.push(restrictAllow(agent, allow, detected),
+        agent.ctx.tools.guard(execution => noWait(execution, name => isShellTool(agent, name), () => this.routed(agent))))
     } else {
       // An Executor Session keeps the profile's work tools it has, which DSH requires to be known; its own tools are not masked.
       binding.disposers.push(...this.workOnly(agent, ticket!.id))
@@ -292,9 +284,9 @@ export class Sessions {
    */
   private workOnly(agent: Agent, ticketId: string): (() => void)[] {
     const store = this.host.store
-    const parent = scopeParentOf(agent)
-    const allow = WORK_TOOLS.filter(name => agent.ctx.tools.get(name, parent))
-    return [agent.ctx.tools.restrict({ allow }), agent.ctx.tools.guard(() => {
+    // The tools the host actually exposes, with a renamed shell found by its parameters (see capabilities.ts).
+    const { allow, detected } = workerAllow(agent)
+    return [restrictAllow(agent, allow, detected), agent.ctx.tools.guard(() => {
       const current = store.tickets.get(ticketId)
       return !current || !liveTicket(current) ? 'Ticket ended; new work needs a new authorized ticket' : undefined
     })]

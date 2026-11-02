@@ -26,8 +26,9 @@ const DRAIN_LIMIT_MS = 10_000
 /** How long one wait that collects a job's end runs; one that ends with the job running is followed by the next. */
 const COLLECT_WAIT_MS = 10 * 60_000
 
-const registry = (ctx: Context): Jobs | undefined => ctx.get('jobs') as Jobs | undefined
-const subagentsOf = (ctx: Context): Subagents | undefined => ctx.get('subagents') as Subagents | undefined
+// A profile without a service has none, and `ctx.get` throws for a missing one: probe with `strict` off.
+const registry = (ctx: Context): Jobs | undefined => ctx.get('jobs', false) as Jobs | undefined
+const subagentsOf = (ctx: Context): Subagents | undefined => ctx.get('subagents', false) as Subagents | undefined
 const running = (status: string) => status === 'running' || status === 'stopping'
 /** The jobs the Session owns that run, but those in `except`, such as the ones left to a person. */
 const owned = (jobs: Jobs, sessionId: string, except?: ReadonlySet<string>) =>
