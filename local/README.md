@@ -9,7 +9,18 @@
 | `docs/evaluation.md` | 可行性评估与优化路线：逐模块复用度、实测技术债清单、优化优先级、分阶段验收标准 |
 | `docs/windows-patches.md` | 本地适配补丁逐条说明（症状 / 根因 / 改法）、升级 SOP、故障速查 |
 | `patches/dsh-superagent-windows-host.patch` | 可重放补丁：对干净上游 `git apply` 校验通过 |
+| `scripts/diagnose.mjs` | 一键诊断：采集 fork 状态、profile、state 目录、端口、API、插件日志，并给出结论 |
 | `scripts/verify-restart-survival.mjs` | 验收脚本：验证管理 API 在配置保存引发的 fiber 重启前后始终可用 |
+
+## 运维命令
+
+```bash
+# 诊断（服务停着也能跑）
+node local/scripts/diagnose.mjs                 # 打印并写入 ~/.dsh/state/superagent-diagnosis.txt
+
+# 验证配置保存不会打掉管理 API
+node local/scripts/verify-restart-survival.mjs
+```
 
 ## 与上游的关系
 

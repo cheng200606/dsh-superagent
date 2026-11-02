@@ -11,6 +11,7 @@ import { PromptConflict, SKILL_NAME, SKILL_PREFIX, TEAM_SECTIONS, builtInBase, b
 import { policyVersion } from '../policy.ts'
 import { SettingsConflict, type Settings } from './settings.ts'
 import { SetupError, type SetupProblem } from '../setup.ts'
+import type { Diagnostics } from '../infra/diagnostics.ts'
 import { UserError, type EngineForPeople, type Ticket } from '../core/index.ts'
 import type { Deployment, Machine } from '../deployment.ts'
 import type { DshExecutor } from '../executor/dsh.ts'
@@ -41,6 +42,8 @@ export interface HttpHost {
   readonly health: Record<string, Health>
   readonly machine: Machine
   readonly masterId: string
+  /** The plugin's own record of what it did; a failed request is written there. */
+  readonly diagnostics?: Pick<Diagnostics, 'record'>
   /** Resolves once startup finishes or setup determines what is still missing. */
   readonly ready: Promise<void>
   /** Resolved deployment; throws if read while waiting for setup (`!configured()`). */
@@ -258,7 +261,10 @@ export function registerHttp(ctx: Context, runtime: HttpHost): () => void {
         if (!route) throw new RouteError(404, 'Unknown operation')
         const query = Object.fromEntries(url.searchParams)
         json(res, 200, await route.run({ params: route.params as never, query, body: maxBytes => readBody(req, maxBytes) }))
-      } catch (error) { json(res, ...failure(error)) }
+      } catch (error) {
+        current.runtime.diagnostics?.record('http-error', { path: url.pathname, error: String(error) })
+        json(res, ...failure(error))
+      }
     } })
     management = { runtime, table: routes(runtime), remove }
   }

@@ -31,6 +31,7 @@
 | 6 | `src/sources/github.ts:243,399` + `src/sources/github-trigger.ts:62-72` | 单账号部署下**永远无法触发** | 原型跳过 agent 自己发布的内容（防自触发环），且这类内容 `human: false` 会被 `not_human` 拒绝 | 收窄放行：**自己发布且明确 @ 了 agent** 的评论才被接收，并按人类请求计入 |
 | 7 | `src/app/http.ts:230-277` | 保存设置后管理 API 永久 404，必须重启整个 DSH 进程 | 宿主的 Web server 按**路径**存路由：重复注册抛错，disposer 也按路径删除。fiber 重启时新注册可能先于旧 disposer 执行 → 新注册被拒、旧 disposer 删掉路由 | 路由改为**进程级持有**：只注册一次，重启时换入当前 runtime 并重建路由表；旧 fiber 的 disposer 发现 runtime 已被接管则不删路由 |
 | 8 | `src/app/runtime.ts:166-172` | 启动失败没有任何日志，只表现为 404/400 | `initialize()` 的失败只变成 `this.ready` 的未处理 rejection | 失败时写一条 `ctx.logger.error`，并继续拒绝 `ready` |
+| 9 | `src/infra/diagnostics.ts`（新增）+ `src/app/runtime.ts`、`src/app/http.ts` | 宿主进程独立运行，日志行到不了启动它的终端，排查只能靠猜 | 插件没有自己的记录 | 插件把生命周期写进 `<stateDir>/diagnostics.log`（每行一个 JSON，有界）；`local/scripts/diagnose.mjs` 读它并给出结论 |
 
 ### 关于补丁 7 的机制
 
