@@ -432,6 +432,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/retry-health.spec.ts`, `tests/role-models.spec.ts` | Model budget retries, and the models of the two roles |
 | `tests/runtime.spec.ts` | The whole application on a simulated DeepSeek Harness host, through tools and HTTP |
 | `tests/manual.spec.ts` | The operator's manual request path: the roster that keeps the operator allowed, a request that becomes a ticket at once, and the refusals |
+| `tests/retain.spec.ts` | Record retention: records past the cutoff that started no ticket are deleted, and what an open ticket or a recent thread needs stays |
 | `tests/capabilities.spec.ts` | The capability-detection layer: role allow lists keep what a scope exposes, and a renamed shell is found by its parameters |
 | `tests/tools.spec.ts` | The Sessions' tools: what `orchestrator_read` reads for each role, and the shapes and checks of the other main Session tools |
 | `tests/runtime-concurrency.spec.ts` | Work that overlaps: Triggers during a pass, Tickets that change during deliveries and launches |

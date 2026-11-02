@@ -60,4 +60,6 @@ export const KV = {
    * second request.
    */
   localdir: { seen: record<Record<string, string>>('localdir-seen') },
+  /** Maintenance: the last time record retention ran, as a Unix millisecond count. */
+  maintenance: { retained: record<number>('maintenance-retained-at') },
 }

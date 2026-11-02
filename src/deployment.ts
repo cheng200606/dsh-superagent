@@ -21,6 +21,9 @@ export const Config = s.object({
     .description('Pages of thread context one assessment may read.').volatile(),
   admissionContextTimeoutMs: s.number().min(LIMITS.admissionContextTimeoutMs.min).max(LIMITS.admissionContextTimeoutMs.max).step(1)
     .default(15000).description('Time limit of one context read during an assessment, in milliseconds.').volatile(),
+  retentionDays: s.number().min(0).max(3650).step(1).default(30)
+    .description('Days to keep Triggers, dispositions and Decisions that started no ticket; 0 keeps everything. Older records '
+      + 'are deleted about once an hour, never while their thread still has an open ticket.').volatile(),
 })
 export type DeploymentConfig = ReturnType<typeof Config>
 export interface Machine {
@@ -28,6 +31,7 @@ export interface Machine {
   promptMaxChars: Volatile<number>
   admissionContextMaxPages: Volatile<number>
   admissionContextTimeoutMs: Volatile<number>
+  retentionDays: Volatile<number>
 }
 const MOVED: Record<string, string> = {
   repository: 'on the GitHub Source', branchPrefix: 'in the prepare command of the Execution settings', github: 'on the GitHub Source',
@@ -39,8 +43,8 @@ const MOVED: Record<string, string> = {
 export function machineOf(config: DeploymentConfig): Machine {
   const unknown = Object.keys(config).filter(key => !(key in (Config.dict ?? {})))
   if (unknown.length) throw new Error(`dsh-superagent configuration has keys it does not use: ${unknown.map(key => MOVED[key] ? `${key} (now ${MOVED[key]})` : key).join(', ')}; docs/006-deployment.md lists the keys`)
-  const { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs } = config
-  return { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs }
+  const { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs, retentionDays } = config
+  return { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs, retentionDays }
 }
 
 export const GithubAccountsSchema = z.object({

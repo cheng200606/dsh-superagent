@@ -12,7 +12,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
-import { key, type OutboundMessage, type Trigger } from '../core/index.ts'
+import { key, type Trigger } from '../core/index.ts'
 import { sourceContext, type SourceContext } from './host.ts'
 import type { SourceKind } from './kind.ts'
 
@@ -59,10 +59,6 @@ export function webhookTrigger(text: string, sender: string, at: string, id: str
 }
 
 /** The endpoint does not carry answers back; a caller reads its ticket's outcome from the management API instead. */
-export async function sendWebhook(_host: Pick<SourceContext, 'commands'>, _message: OutboundMessage): Promise<'sent' | 'gone'> {
-  throw new Error('The webhook Source has no reply channel; read the ticket outcome from the management API')
-}
-
 export const webhookKind: SourceKind<WebhookConfig> = {
   kind: 'webhook',
   title: { zh: '本地 Webhook', en: 'Local webhook' },

@@ -37,6 +37,22 @@ function schema10(path: string, records: Record<string, unknown>, rows: { ticket
 const actor = { source: 'feishu', id: 'ou_alice' }
 const mandate = (basis: object) => ({ strength: 'explicit', policyVersion: 'v1', basis, actor, scope: 'small' })
 
+it('leaves a consistent backup of a schema 10 database beside it before migrating, and rolls it forward from the copy', () => {
+  const path = join(directory, 'db.sqlite')
+  const backup = `${path}.backup-v10`
+  schema10(path, { 'thread-initialized-somewhere': 1 })
+  new Store(path).close()
+  // The copy holds the database as the old schema had it.
+  const copy = new DatabaseSync(backup)
+  expect(copy.prepare('SELECT value FROM kv WHERE key = ?').get('schema')?.value).toBe('10')
+  expect(JSON.parse(String(copy.prepare('SELECT value FROM kv WHERE key = ?').get('thread-initialized-somewhere')?.value))).toBe(1)
+  copy.close()
+  // Rolling back means replacing the database with the copy; opening the copy migrates it again.
+  const rolled = new Store(backup)
+  expect(rolled.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+  rolled.close()
+})
+
 it('refuses a database older than schema 10 and asks for a new state directory', () => {
   const path = join(directory, 'db.sqlite')
   new Store(path).close()

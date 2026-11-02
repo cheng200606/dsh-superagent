@@ -1,6 +1,6 @@
 /** SQLite persistence for domain aggregates, key-value state, settings history, and the channel outbox. */
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
-import { chmodSync, mkdirSync } from 'node:fs'
+import { chmodSync, mkdirSync, rmSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { key, threadKey, type ChannelRef, type Decision, type OutboundMessage, type ReplyStatus, type Repositories, type Thread, type ThreadFact,
   type ThreadFacts, type Ticket, type Trigger, type TriggerDisposition } from '../core/index.ts'
@@ -50,6 +50,8 @@ export { SCHEMA_VERSION }
  */
 export class Store implements Repositories {
   readonly db: DatabaseSync
+  /** The consistent copy a migration left of the database as it was, when one was made. */
+  readonly backupPath?: string
   /**
    * Opens or creates the SQLite database at `path`, migrating schema 10 to schema 11 in a single transaction.
    * @param report - Receives errors thrown by `afterCommit` callbacks without failing the committed transaction.
@@ -66,6 +68,15 @@ export class Store implements Repositories {
       if (version !== undefined && version > SCHEMA_VERSION) throw new Error(`Unsupported orchestrator database version ${version}`)
       if (version !== undefined && version < OLDEST_SCHEMA) throw new Error(tooOld(version))
       const migrating = version !== undefined && version < SCHEMA_VERSION
+      if (migrating) {
+        // A migration rewrites the database in place: leave a consistent copy behind, so an upgrade can be rolled back
+        // by closing the host and replacing the database (and its `-wal`/`-shm` sides) with the copy. A copy left by a
+        // failed earlier attempt held the same schema, so the current pre-migration state replaces it.
+        const backup = `${path}.backup-v${version}`
+        rmSync(backup, { force: true })
+        this.db.prepare('VACUUM INTO ?').run(backup)
+        this.backupPath = backup
+      }
       try {
         this.atomic(() => {
           this.db.exec(`
@@ -171,6 +182,49 @@ export class Store implements Repositories {
   }
   /** Deletes the KV record at `name`. */
   delete(name: string): void { this.db.prepare('DELETE FROM kv WHERE key=?').run(name) }
+  /**
+   * Deletes records past the retention cutoff that no open work still needs, so the database no longer grows forever:
+   * Triggers older than the cutoff that no Ticket names as its origin and that no protected Thread holds; their
+   * dispositions; and Decisions that started no Ticket, on the same Threads. A Thread is protected while a Ticket is
+   * open on it, or it was active since the cutoff. Tickets, Threads, the Outbox and the effect queue are kept entire.
+   * @returns how many Triggers (each with its disposition) and Decisions were deleted.
+   */
+  retain(cutoff: string): { triggers: number; decisions: number } {
+    return this.atomic(() => {
+      const open = new Set<string>()
+      const originTriggers = new Set<string>()
+      for (const row of this.db.prepare('SELECT id, value FROM ticket').all() as { id: string; value: string }[]) {
+        const ticket = JSON.parse(row.value) as { ended?: unknown; origin?: { triggerIds?: string[] } }
+        if (!ticket.ended) open.add(row.id)
+        for (const id of ticket.origin?.triggerIds ?? []) originTriggers.add(id)
+      }
+      const protectedThreads = new Set<string>()
+      for (const row of this.db.prepare('SELECT key, value FROM thread').all() as { key: string; value: string }[]) {
+        const thread = JSON.parse(row.value) as { lastAt?: string; subscriptions?: string[] }
+        if ((thread.lastAt ?? '') >= cutoff || (thread.subscriptions ?? []).some(id => open.has(id))) protectedThreads.add(row.key)
+      }
+      let decisions = 0
+      for (const row of this.db.prepare("SELECT id, thread, value FROM decision WHERE value ->> '$.ticketId' IS NULL").all() as
+        { id: string; thread: string; value: string }[]) {
+        if (protectedThreads.has(row.thread)) continue
+        const decision = JSON.parse(row.value) as { at?: string; triggerIds?: string[] }
+        if ((decision.at ?? '') >= cutoff) continue
+        this.db.prepare('DELETE FROM decision WHERE id = ?').run(row.id)
+        decisions++
+      }
+      let triggers = 0
+      for (const row of this.db.prepare('SELECT id FROM trigger WHERE at < ?').all(cutoff) as { id: string }[]) {
+        if (originTriggers.has(row.id)) continue
+        const threads = this.db.prepare('SELECT thread FROM trigger_thread WHERE id = ?').all(row.id).map(item => String((item as { thread: string }).thread))
+        if (threads.some(thread => protectedThreads.has(thread))) continue
+        this.db.prepare('DELETE FROM trigger WHERE id = ?').run(row.id)
+        this.db.prepare('DELETE FROM disposition WHERE id = ?').run(row.id)
+        this.db.prepare('DELETE FROM trigger_thread WHERE id = ?').run(row.id)
+        triggers++
+      }
+      return { triggers, decisions }
+    })
+  }
   /** Returns all KV keys belonging to `family` or starting with `prefix`. */
   keys<V>(family: Family<V, never>): Key<V>[]
   keys(prefix: string): string[]

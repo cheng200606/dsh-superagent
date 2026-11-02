@@ -164,7 +164,8 @@ export class Runtime extends Service implements SourceHost {
       const evals = board.claim('evals', { state: 'ready', detail: 'No unavailable Eval in the last hour' })
       const evaluateDue = () => { engine.evaluateDue(); evals.set(evalsHealth(store)) }
       const passes = this.passes = new Passes({ engine: { receive: trigger => engine.receive(trigger), evaluateDue }, effects,
-        health: this.runtimeHealth, lifetime: this.lifetime, configured: () => setup.configured(), closing: () => this.closing() })
+        health: this.runtimeHealth, lifetime: this.lifetime, configured: () => setup.configured(), closing: () => this.closing(),
+        maintain: () => this.maintain() })
       this.sourceDeps = { store, engine, outbox, commands, sources, get ready() { return runtime.ready },
         get deployment() { return setup.deployment }, configured: () => setup.configured(),
         get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem }, receive: trigger => passes.receive(trigger) }
@@ -208,6 +209,20 @@ export class Runtime extends Service implements SourceHost {
   receive(trigger: Trigger): ReceiveResult { return this.passes.receive(trigger) }
   /** Runs the work the last pass queued behind itself, such as a ticket a manual creation just opened. */
   requestPass(): void { this.passes.request() }
+  /** Deletes records past the retention window, about once an hour; a pass calls this on every tick. */
+  private maintain(): void {
+    const days = this.machine.retentionDays.get()
+    if (!days) return
+    const last = this.store.get(KV.maintenance.retained) ?? 0
+    if (Date.now() - last < 3_600_000) return
+    this.store.set(KV.maintenance.retained, Date.now())
+    const cutoff = new Date(Date.now() - days * 86_400_000).toISOString()
+    const deleted = this.store.retain(cutoff)
+    if (deleted.triggers || deleted.decisions) {
+      this.diagnostics.record('retain', { cutoff, ...deleted })
+      this.ctx.logger.info('dsh-superagent retention kept %d days: deleted %d trigger(s), %d decision(s)', days, deleted.triggers, deleted.decisions)
+    }
+  }
   idle(): Promise<void> { return this.passes.idle() }
   pump(): Promise<void> { return this.passes.pump() }
   sendReplies(): Promise<void> { return this.outbox.sent() }

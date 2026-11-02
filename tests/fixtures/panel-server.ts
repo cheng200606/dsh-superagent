@@ -332,6 +332,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   'POST tickets': { body: true, answer: ({ body }) => {
     const id = `manual-${Object.keys(server.ticketDetails).length + 1}`
     server.created = { ...server.created, text: body.text, title: body.title }
+    server.ticketDetails[id] = { ...ticketDetail(), id, title: body.title ?? body.text.slice(0, 24) }
     return { trigger_id: `trigger-${id}`, decision: 'accept', ticket_id: id }
   } },
   'POST tickets/:id/retry': { answer: ({ params }) => {

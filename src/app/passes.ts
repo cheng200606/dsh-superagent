@@ -10,6 +10,8 @@ export interface PassesHost {
   readonly lifetime: AbortSignal
   configured(): boolean
   closing(): boolean
+  /** Database maintenance each pass runs when its own turn comes; it throttles itself. */
+  maintain?(): void
 }
 
 const now = (): string => new Date().toISOString()
@@ -65,5 +67,9 @@ export class Passes {
     if (this.host.closing()) return
     // While processing is paused, the Engine only records the pause on active Evals so they do not expire.
     this.host.engine.evaluateDue()
+    try { this.host.maintain?.() } catch (error) {
+      // Maintenance that fails must not fail the pass; its next turn tries again.
+      this.host.health.set({ state: 'error', detail: `Record retention failed: ${String(error)}`, at: now() })
+    }
   }
 }

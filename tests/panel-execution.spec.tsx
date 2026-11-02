@@ -222,3 +222,21 @@ it('sends one stop for a double click on Confirm', async () => {
   await act(async () => { confirm.click(); confirm.click() })
   expect(server.requests.filter(request => request.path === 'tickets/t1/stop')).toHaveLength(1)
 })
+
+it('creates a ticket from the New ticket form and opens its page', async () => {
+  await mount()
+  await click(zh['tab.execution'])
+  await click(zh.createTicket)
+  const dialog = document.querySelector('[role="dialog"]')
+  expect(dialog?.textContent).toContain(zh.createTicketHint)
+  // The submit is disabled until the request has text.
+  expect((find(zh.createTicketSubmit) as HTMLButtonElement).disabled).toBe(true)
+  await type(field<HTMLTextAreaElement>(zh.createTicketText), '把 README 的安装一节翻译成英文')
+  await type(field<HTMLInputElement>(zh.createTicketTitle), '翻译 README')
+  await click(zh.createTicketSubmit)
+  const created = server.requests.find(request => request.path === 'tickets' && request.method === 'POST')
+  expect(created).toMatchObject({ body: { text: '把 README 的安装一节翻译成英文', title: '翻译 README' } })
+  // The dialog closed and the ticket's page opened.
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  expect(document.querySelector('.dt-page-title h2')?.textContent).toBe('翻译 README')
+})
