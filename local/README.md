@@ -11,7 +11,26 @@
 | `patches/dsh-superagent-windows-host.patch` | 可重放补丁：对干净上游 `git apply` 校验通过 |
 | `scripts/diagnose.mjs` | 一键诊断：采集 fork 状态、profile、state 目录、端口、API、插件日志，并给出结论 |
 | `scripts/supervisor.mjs` | 进程守护：直接持有 DSH 宿主进程，负责启动、崩溃自愈、停止与锁清理（替代依赖 tmux 的官方脚本） |
+| `scripts/dsh-superagent-config.mjs` | 配置写入：GitHub 源、本地目录源、策略白名单与执行器设置 |
 | `scripts/verify-restart-survival.mjs` | 验收脚本：验证管理 API 在配置保存引发的 fiber 重启前后始终可用 |
+
+## 本地目录 Source（本 fork 新增）
+
+原型的触发源只有 GitHub 与飞书。本 fork 加了第三个：**本地目录**——监视一个文件夹，放进去的文件就是请求，答案写在同名 `.reply.md` 旁。
+
+它不需要账号、令牌、网络或任何外部程序，是最短的"想法 → 工单"路径，也是没有第二个 GitHub 账号时验证整条链路的办法。
+
+```bash
+# 1. 监视 C:/Users/26825/tasks（写入 source:localdir 与策略白名单）
+node local/scripts/dsh-superagent-config.mjs source:localdir policy
+
+# 2. 放一个请求进去
+echo "把 README 的第一段翻译成英文" > C:/Users/26825/tasks/translate.md
+
+# 3. 约 10 秒后面板出现工单，答案写在 C:/Users/26825/tasks/translate.reply.md
+```
+
+实现见 `src/sources/localdir.ts`，按 `docs/008-cookbook.md` 的配方写成独立的 bundle 插件（`./localdir-watch`），配置块为 `source:localdir`，策略白名单里需要 `local` 这个发送者。
 
 ## 运维命令
 
