@@ -1,0 +1,199 @@
+diff --git a/src/app/sessions.ts b/src/app/sessions.ts
+index 1a22388..fb7cd43 100644
+--- a/src/app/sessions.ts
++++ b/src/app/sessions.ts
+@@ -76,7 +76,7 @@ const SLEEP = /(?:^|[;&|({!`\n]|\b(?:do|then|else|elif|if|while|until|time|exec|
+  */
+ function noWait({ name, arguments: input }: { name: string; arguments: unknown }, routed: () => boolean): string | undefined {
+   const args = (input ?? {}) as { command?: unknown; timeoutMs?: unknown; run_in_background?: unknown; wait?: unknown; timeout_ms?: unknown }
+-  if (name === 'bash') {
++  if (name === 'bash' || name === 'pwsh') {
+     const sleeps = typeof args.command === 'string' && SLEEP.test(args.command)
+     if (sleeps || typeof args.timeoutMs === 'number' && args.timeoutMs > 30_000) return NO_WAIT
+     if (args.timeoutMs === undefined && args.run_in_background !== true && !routed()) return DEFAULT_WAIT
+@@ -260,7 +260,11 @@ export class Sessions {
+     const register = this.registerTool(agent, binding)
+     for (const tool of host.tools(agent, ticket)) register(tool.name, tool.description, tool.schema, tool.execute)
+     if (master) {
+-      binding.disposers.push(agent.ctx.tools.restrict({ allow: ['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill'] }),
++      // A DSH build names its shell tool differently: an earlier one had `bash`, this one has `pwsh`.
++      // DSH refuses a restriction that names a tool it does not know, so keep only the tools this host exposes.
++      const parent = scopeParentOf(agent)
++      const allow = ['skill', 'bash', 'pwsh', 'read', 'read_image', 'job_output', 'job_list', 'job_kill'].filter(name => agent.ctx.tools.get(name, parent))
++      binding.disposers.push(agent.ctx.tools.restrict({ allow }),
+         agent.ctx.tools.guard(execution => noWait(execution, () => this.routed(agent))))
+     } else {
+       // An Executor Session keeps the profile's work tools it has, which DSH requires to be known; its own tools are not masked.
+diff --git a/src/deployment.ts b/src/deployment.ts
+index 76340cb..49b94b5 100644
+--- a/src/deployment.ts
++++ b/src/deployment.ts
+@@ -10,7 +10,8 @@ import { runAsWorker, sameDirectory, withoutDirectory, workerBin } from './infra
+ import { SetupError } from './setup.ts'
+ 
+ const reason = (error: unknown): string => error instanceof Error ? error.message : String(error)
+-const absolute = (description: string) => s.string().pattern(/^\//).description(`${description} Absolute path.`)
++// Windows adaptation: accept drive-letter paths (C:/ or C:\) in addition to POSIX absolute paths.
++const absolute = (description: string) => s.string().pattern(/^(\/|[A-Za-z]:[\\/])/).description(`${description} Absolute path.`)
+ /** Plugin configuration of the dsh-superagent entry. Volatile fields apply without a restart because dsh-superagent reads them on each use; changing `stateDir` remounts the plugin. */
+ export const Config = s.object({
+   stateDir: absolute('Directory for the database, locks, worker shims, the agent\'s git configuration and, by default, the ticket directories.').required(),
+diff --git a/src/infra/environment.ts b/src/infra/environment.ts
+index b6d92c3..1c7a838 100644
+--- a/src/infra/environment.ts
++++ b/src/infra/environment.ts
+@@ -90,6 +90,14 @@ export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' |
+     await rename(temporary, join(dir, name))
+     kept.add(name)
+   }
++  // Windows resolves a command through PATHEXT, so the extensionless POSIX shim above is invisible to a Windows shell.
++  // The marker must be one of the first two lines exactly, so the file uses LF endings like the other files here.
++  const cmdShim = async (name: string, body: string): Promise<void> => {
++    const temporary = join(dir, `.${name}.cmd.${process.pid}.tmp`)
++    await writeFile(temporary, `@echo off\n${MARKER}\n${body}\n`, { mode: 0o755 })
++    await rename(temporary, join(dir, `${name}.cmd`))
++    kept.add(`${name}.cmd`)
++  }
+   const withoutShims = [
+     `self=${shellQuote(dir)}`, 'rest=', 'IFS=:', 'set -f',
+     'for entry in $PATH; do [ "$entry" = "$self" ] || rest="${rest:+$rest:}$entry"; done',
+@@ -97,10 +105,18 @@ export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' |
+   ].join('\n')
+   const run = (program: string): string => `${withoutShims}\nexec ${shellQuote(program)} "$@"`
+   const fail = (message: string): string => `echo ${shellQuote(message)} >&2\nexit 1`
++  // The Windows body mirrors the POSIX one: drop the shim directory from PATH, then run the program with its arguments.
++  const cmdRun = (program: string): string => [`set "PATH=%PATH:${dir};=;%"`, `"${program}" %*`, 'exit /b %ERRORLEVEL%'].join('\n')
++  const cmdFail = (message: string): string => [`echo ${message} 1>&2`, 'exit /b 1'].join('\n')
+   await shim('gh', run(github.cli))
+   await shim('lark-cli', feishu ? run(feishu.cli) : fail('lark-cli is unavailable: this installation has no Feishu bot.'))
++  if (process.platform === 'win32') {
++    await cmdShim('gh', cmdRun(github.cli))
++    await cmdShim('lark-cli', feishu ? cmdRun(feishu.cli) : cmdFail('lark-cli is unavailable: this installation has no Feishu bot.'))
++  }
+   for (const name of new Set(blockedCommands.filter(name => !WORKER_COMMANDS.includes(name)))) {
+     await shim(name, fail(`${name} is blocked in this installation; use gh, which acts as ${github.login}.`))
++    if (process.platform === 'win32') await cmdShim(name, cmdFail(`${name} is blocked in this installation; use gh, which acts as ${github.login}.`))
+   }
+   for (const name of before) if (!kept.has(name)) await unlink(join(dir, name))
+   await own(workerGitConfig(stateDir), [
+diff --git a/src/policy.ts b/src/policy.ts
+index b6a66cf..685c3e9 100644
+--- a/src/policy.ts
++++ b/src/policy.ts
+@@ -91,7 +91,8 @@ const CommandNameSchema = z.string().regex(/^[A-Za-z0-9._-]+$/).refine(name => n
+ export const ExecutorConfigSchema = z.object({
+   model: RoleModelSchema.nullable().default(null),
+   maxWorkers: z.number().int().min(LIMITS.maxWorkers.min).max(LIMITS.maxWorkers.max).default(3),
+-  directory: z.string().trim().refine(path => path === '' || path.startsWith('/'), 'An absolute path, or empty for <stateDir>/work').default(''),
++  // Windows adaptation: accept drive-letter paths (C:/ or C:\) in addition to POSIX absolute paths.
++  directory: z.string().trim().refine(path => path === '' || path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path), 'An absolute path, or empty for <stateDir>/work').default(''),
+   prepare: z.string().max(LIMITS.prepareCommand).default(''),
+   blockedCommands: z.array(CommandNameSchema).default([]),
+ }).strict()
+diff --git a/src/sources/github-trigger.ts b/src/sources/github-trigger.ts
+index fffd86d..a423446 100644
+--- a/src/sources/github-trigger.ts
++++ b/src/sources/github-trigger.ts
+@@ -59,14 +59,19 @@ function commentText(comment: GithubComment, kind: 'conversation' | 'inline' | '
+ }
+ export const mentions = (text: string, login: string): boolean =>
+   new RegExp(`(?:^|[^a-zA-Z0-9_@])@${escapeRegExp(login)}(?![a-zA-Z0-9_-])`, 'i').test(text)
+-const author = (user: { login: string; type?: string }, agent: string) =>
+-  ({ actor: { source: SOURCE, id: user.login }, human: isHumanLogin(user) && !sameName(user.login, agent) })
++/**
++ * The actor of a trigger. The agent's own messages are not a person's request, so they are not human; a message its
++ * account wrote that addresses it by name is a person talking to it through that account, and counts as one.
++ */
++const author = (user: { login: string; type?: string }, agent: string, mentioned = false) =>
++  ({ actor: { source: SOURCE, id: user.login }, human: isHumanLogin(user) && (!sameName(user.login, agent) || mentioned) })
+ /** Builds a trigger for a comment or review; text is empty for a bodyless comment or a `COMMENTED` review without a body. */
+ export function commentTrigger(comment: GithubComment, ref: PullRef, kind: 'conversation' | 'inline' | 'review', agent: string): Trigger {
+   const at = comment.updated_at ?? comment.submitted_at ?? comment.created_at ?? new Date().toISOString()
+   const version = comment.updated_at ?? comment.submitted_at ?? ''
+   const id = key('github-comment', comment.html_url ?? `github:${ref.number}`, String(comment.id), version)
+-  return { id, source: SOURCE, threads: [{ source: SOURCE, id: String(ref.number) }], ...author(comment.user, agent), at,
++  const addressed = mentions(comment.body ?? '', agent)
++  return { id, source: SOURCE, threads: [{ source: SOURCE, id: String(ref.number) }], ...author(comment.user, agent, addressed), at,
+     text: commentText(comment, kind),
+     ...(mentions(comment.body ?? '', agent) ? { addressed: 'mention' as const } : {}),
+     channel: githubChannel(ref.number, comment.html_url ?? undefined),
+diff --git a/src/sources/github.ts b/src/sources/github.ts
+index f9b80b6..0fe11ac 100644
+--- a/src/sources/github.ts
++++ b/src/sources/github.ts
+@@ -5,7 +5,7 @@ import { sameName } from '../infra/text.ts'
+ import { GithubAccountsSchema } from '../deployment.ts'
+ import { CliError, validItems, type Tally } from '../infra/commands.ts'
+ import { ciCounts, ciFact, ciFailures, ciSummary, githubThreadContext, pullChecks } from './github-read.ts'
+-import { branchCiTrigger, ciTrigger, commentTrigger, CommentSchema, githubAddress, issueTrigger, IssueSchema, pullTrigger, SOURCE }
++import { branchCiTrigger, ciTrigger, commentTrigger, CommentSchema, githubAddress, issueTrigger, IssueSchema, mentions, pullTrigger, SOURCE }
+   from './github-trigger.ts'
+ import { githubLink, sendGithub } from './github-channel.ts'
+ import type { GithubComment, PullRef } from './github-trigger.ts'
+@@ -156,9 +156,23 @@ export interface Retry { since: string; pr: boolean; failedAt?: string; attempts
+ const RETRY_WINDOW_MS = 24 * 3600_000
+ /** True when GitHub returns HTTP 410 (Gone); HTTP 404 is retried because it can indicate revoked access to a private repository. */
+ const deleted = (error: unknown): boolean => error instanceof CliError && error.code === 410
++/**
++ * Whether GitHub says the Thread is gone. A deleted issue answers 410, while one that is gone or that this account may no
++ * longer see answers 404. A 404 can also mean the account lost access to the repository, so the repository is read once to
++ * tell the two apart: a readable repository means the Thread is gone and reading it again will fail forever.
++ */
++async function gone(ctx: SourceContext, error: unknown, signal?: AbortSignal): Promise<boolean> {
++  if (deleted(error)) return true
++  if (!(error instanceof CliError) || error.code !== 404) return false
++  try {
++    // An empty path reads the repository itself, which proves the account still has access to it.
++    await ctx.commands.withSignal(signal).api('')
++    return true
++  } catch { return false }
++}
+ /** Records a failed read on the Thread and in the round; deleted (410) or abandoned (24h+) threads do not fail the round. */
+-function failed(ctx: SourceContext, round: Round, number: number, error: unknown, abandoned = false): void {
+-  if (deleted(error)) round.dropped.push(number)
++function failed(ctx: SourceContext, round: Round, number: number, error: unknown, abandoned = false, isGone = false): void {
++  if (isGone || deleted(error)) round.dropped.push(number)
+   else if (abandoned) round.abandoned.push(number)
+   else round.failures.push(`#${number}: ${String(error)}`)
+   ctx.threads.patch(`github:${number}`, { pollError: String(error) })
+@@ -224,7 +238,9 @@ async function readStream(ctx: SourceContext, round: Round, id: string, path: st
+   for (const item of items) {
+     // Stopping mid-stream aborts before advancing the cursor so unread items are retried.
+     if (stopped(ctx, round)) throw new Error('The GitHub Source stopped during the poll')
+-    if (sameName(item.user.login, login)) continue
++    // The agent's own items are skipped so its replies cannot trigger it again. A comment its account wrote that
++    // addresses it by name is a person talking to it through that account, so that comment is admitted.
++    if (sameName(item.user.login, login) && !(id !== 'issues' && mentions((item as { body?: string | null }).body ?? '', login))) continue
+     if (id === 'issues') {
+       const issue = IssueSchema.safeParse(item)
+       const pr = issue.success && !!issue.data.pull_request
+@@ -333,8 +349,9 @@ async function pollNotifications(ctx: SourceContext, round: Round): Promise<{ co
+       const retry = { ...item, failedAt: item.failedAt ?? round.started, attempts: (item.attempts ?? 0) + 1 }
+       // Abandon notification retries after 24 hours of failures so a permanently unreadable thread does not hold source health in error; its cursor stays so a later notification or thread poll still reads what was missed.
+       const abandoned = Date.parse(round.started) - Date.parse(retry.failedAt) >= RETRY_WINDOW_MS
+-      failed(ctx, round, number, error, abandoned)
+-      if (!deleted(error) && !abandoned) { retries[number] = retry; continue }
++      const isGone = await gone(ctx, error, round.signal)
++      failed(ctx, round, number, error, abandoned, isGone)
++      if (!isGone && !abandoned) { retries[number] = retry; continue }
+       delete retries[number]
+     }
+   }
+@@ -394,7 +411,7 @@ async function intakeComments(ctx: SourceContext, ref: PullRef, since: string, r
+       if (stopped(ctx, round)) throw new Error('The GitHub Source stopped during the poll')
+       const timestamp = Date.parse(comment.updated_at ?? comment.submitted_at ?? comment.created_at ?? '')
+       if (!Number.isFinite(timestamp) || timestamp < Date.parse(since)) continue
+-      if (sameName(comment.user.login, login)) continue
++      if (sameName(comment.user.login, login) && !mentions(comment.body ?? '', login)) continue
+       // A review decision without a body still reaches the ticket: a worker may be waiting for that approval.
+       const trigger = commentTrigger(comment, ref, kind, login)
+       if (trigger.text) await ctx.receive(trigger)
+@@ -432,7 +449,7 @@ export async function pollThreads(ctx: SourceContext, signal?: AbortSignal, roun
+     try { await pollThread(ctx, round, thread) }
+     catch (error) {
+       if (stopped(ctx, round)) throw error
+-      if (deleted(error)) round.dropped.push(Number(thread.ref.id)); else round.failures.push(`${thread.key}: ${String(error)}`)
++      if (await gone(ctx, error, round.signal)) round.dropped.push(Number(thread.ref.id)); else round.failures.push(`${thread.key}: ${String(error)}`)
+       throw error
+     }
+   }, thread => round.read.has(Number(thread.ref.id)))
