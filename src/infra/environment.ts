@@ -90,6 +90,14 @@ export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' |
     await rename(temporary, join(dir, name))
     kept.add(name)
   }
+  // Windows resolves a command through PATHEXT, so the extensionless POSIX shim above is invisible to a Windows shell.
+  // The marker must be one of the first two lines exactly, so the file uses LF endings like the other files here.
+  const cmdShim = async (name: string, body: string): Promise<void> => {
+    const temporary = join(dir, `.${name}.cmd.${process.pid}.tmp`)
+    await writeFile(temporary, `@echo off\n${MARKER}\n${body}\n`, { mode: 0o755 })
+    await rename(temporary, join(dir, `${name}.cmd`))
+    kept.add(`${name}.cmd`)
+  }
   const withoutShims = [
     `self=${shellQuote(dir)}`, 'rest=', 'IFS=:', 'set -f',
     'for entry in $PATH; do [ "$entry" = "$self" ] || rest="${rest:+$rest:}$entry"; done',
@@ -97,10 +105,18 @@ export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' |
   ].join('\n')
   const run = (program: string): string => `${withoutShims}\nexec ${shellQuote(program)} "$@"`
   const fail = (message: string): string => `echo ${shellQuote(message)} >&2\nexit 1`
+  // The Windows body mirrors the POSIX one: drop the shim directory from PATH, then run the program with its arguments.
+  const cmdRun = (program: string): string => [`set "PATH=%PATH:${dir};=;%"`, `"${program}" %*`, 'exit /b %ERRORLEVEL%'].join('\n')
+  const cmdFail = (message: string): string => [`echo ${message} 1>&2`, 'exit /b 1'].join('\n')
   await shim('gh', run(github.cli))
   await shim('lark-cli', feishu ? run(feishu.cli) : fail('lark-cli is unavailable: this installation has no Feishu bot.'))
+  if (process.platform === 'win32') {
+    await cmdShim('gh', cmdRun(github.cli))
+    await cmdShim('lark-cli', feishu ? cmdRun(feishu.cli) : cmdFail('lark-cli is unavailable: this installation has no Feishu bot.'))
+  }
   for (const name of new Set(blockedCommands.filter(name => !WORKER_COMMANDS.includes(name)))) {
     await shim(name, fail(`${name} is blocked in this installation; use gh, which acts as ${github.login}.`))
+    if (process.platform === 'win32') await cmdShim(name, cmdFail(`${name} is blocked in this installation; use gh, which acts as ${github.login}.`))
   }
   for (const name of before) if (!kept.has(name)) await unlink(join(dir, name))
   await own(workerGitConfig(stateDir), [

@@ -5,7 +5,7 @@ import { sameName } from '../infra/text.ts'
 import { GithubAccountsSchema } from '../deployment.ts'
 import { CliError, validItems, type Tally } from '../infra/commands.ts'
 import { ciCounts, ciFact, ciFailures, ciSummary, githubThreadContext, pullChecks } from './github-read.ts'
-import { branchCiTrigger, ciTrigger, commentTrigger, CommentSchema, githubAddress, issueTrigger, IssueSchema, pullTrigger, SOURCE }
+import { branchCiTrigger, ciTrigger, commentTrigger, CommentSchema, githubAddress, issueTrigger, IssueSchema, mentions, pullTrigger, SOURCE }
   from './github-trigger.ts'
 import { githubLink, sendGithub } from './github-channel.ts'
 import type { GithubComment, PullRef } from './github-trigger.ts'
@@ -156,9 +156,23 @@ export interface Retry { since: string; pr: boolean; failedAt?: string; attempts
 const RETRY_WINDOW_MS = 24 * 3600_000
 /** True when GitHub returns HTTP 410 (Gone); HTTP 404 is retried because it can indicate revoked access to a private repository. */
 const deleted = (error: unknown): boolean => error instanceof CliError && error.code === 410
+/**
+ * Whether GitHub says the Thread is gone. A deleted issue answers 410, while one that is gone or that this account may no
+ * longer see answers 404. A 404 can also mean the account lost access to the repository, so the repository is read once to
+ * tell the two apart: a readable repository means the Thread is gone and reading it again will fail forever.
+ */
+async function gone(ctx: SourceContext, error: unknown, signal?: AbortSignal): Promise<boolean> {
+  if (deleted(error)) return true
+  if (!(error instanceof CliError) || error.code !== 404) return false
+  try {
+    // An empty path reads the repository itself, which proves the account still has access to it.
+    await ctx.commands.withSignal(signal).api('')
+    return true
+  } catch { return false }
+}
 /** Records a failed read on the Thread and in the round; deleted (410) or abandoned (24h+) threads do not fail the round. */
-function failed(ctx: SourceContext, round: Round, number: number, error: unknown, abandoned = false): void {
-  if (deleted(error)) round.dropped.push(number)
+function failed(ctx: SourceContext, round: Round, number: number, error: unknown, abandoned = false, isGone = false): void {
+  if (isGone || deleted(error)) round.dropped.push(number)
   else if (abandoned) round.abandoned.push(number)
   else round.failures.push(`#${number}: ${String(error)}`)
   ctx.threads.patch(`github:${number}`, { pollError: String(error) })
@@ -224,7 +238,9 @@ async function readStream(ctx: SourceContext, round: Round, id: string, path: st
   for (const item of items) {
     // Stopping mid-stream aborts before advancing the cursor so unread items are retried.
     if (stopped(ctx, round)) throw new Error('The GitHub Source stopped during the poll')
-    if (sameName(item.user.login, login)) continue
+    // The agent's own items are skipped so its replies cannot trigger it again. A comment its account wrote that
+    // addresses it by name is a person talking to it through that account, so that comment is admitted.
+    if (sameName(item.user.login, login) && !(id !== 'issues' && mentions((item as { body?: string | null }).body ?? '', login))) continue
     if (id === 'issues') {
       const issue = IssueSchema.safeParse(item)
       const pr = issue.success && !!issue.data.pull_request
@@ -333,8 +349,9 @@ async function pollNotifications(ctx: SourceContext, round: Round): Promise<{ co
       const retry = { ...item, failedAt: item.failedAt ?? round.started, attempts: (item.attempts ?? 0) + 1 }
       // Abandon notification retries after 24 hours of failures so a permanently unreadable thread does not hold source health in error; its cursor stays so a later notification or thread poll still reads what was missed.
       const abandoned = Date.parse(round.started) - Date.parse(retry.failedAt) >= RETRY_WINDOW_MS
-      failed(ctx, round, number, error, abandoned)
-      if (!deleted(error) && !abandoned) { retries[number] = retry; continue }
+      const isGone = await gone(ctx, error, round.signal)
+      failed(ctx, round, number, error, abandoned, isGone)
+      if (!isGone && !abandoned) { retries[number] = retry; continue }
       delete retries[number]
     }
   }
@@ -394,7 +411,7 @@ async function intakeComments(ctx: SourceContext, ref: PullRef, since: string, r
       if (stopped(ctx, round)) throw new Error('The GitHub Source stopped during the poll')
       const timestamp = Date.parse(comment.updated_at ?? comment.submitted_at ?? comment.created_at ?? '')
       if (!Number.isFinite(timestamp) || timestamp < Date.parse(since)) continue
-      if (sameName(comment.user.login, login)) continue
+      if (sameName(comment.user.login, login) && !mentions(comment.body ?? '', login)) continue
       // A review decision without a body still reaches the ticket: a worker may be waiting for that approval.
       const trigger = commentTrigger(comment, ref, kind, login)
       if (trigger.text) await ctx.receive(trigger)
@@ -432,7 +449,7 @@ export async function pollThreads(ctx: SourceContext, signal?: AbortSignal, roun
     try { await pollThread(ctx, round, thread) }
     catch (error) {
       if (stopped(ctx, round)) throw error
-      if (deleted(error)) round.dropped.push(Number(thread.ref.id)); else round.failures.push(`${thread.key}: ${String(error)}`)
+      if (await gone(ctx, error, round.signal)) round.dropped.push(Number(thread.ref.id)); else round.failures.push(`${thread.key}: ${String(error)}`)
       throw error
     }
   }, thread => round.read.has(Number(thread.ref.id)))

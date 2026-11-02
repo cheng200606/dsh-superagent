@@ -59,14 +59,19 @@ function commentText(comment: GithubComment, kind: 'conversation' | 'inline' | '
 }
 export const mentions = (text: string, login: string): boolean =>
   new RegExp(`(?:^|[^a-zA-Z0-9_@])@${escapeRegExp(login)}(?![a-zA-Z0-9_-])`, 'i').test(text)
-const author = (user: { login: string; type?: string }, agent: string) =>
-  ({ actor: { source: SOURCE, id: user.login }, human: isHumanLogin(user) && !sameName(user.login, agent) })
+/**
+ * The actor of a trigger. The agent's own messages are not a person's request, so they are not human; a message its
+ * account wrote that addresses it by name is a person talking to it through that account, and counts as one.
+ */
+const author = (user: { login: string; type?: string }, agent: string, mentioned = false) =>
+  ({ actor: { source: SOURCE, id: user.login }, human: isHumanLogin(user) && (!sameName(user.login, agent) || mentioned) })
 /** Builds a trigger for a comment or review; text is empty for a bodyless comment or a `COMMENTED` review without a body. */
 export function commentTrigger(comment: GithubComment, ref: PullRef, kind: 'conversation' | 'inline' | 'review', agent: string): Trigger {
   const at = comment.updated_at ?? comment.submitted_at ?? comment.created_at ?? new Date().toISOString()
   const version = comment.updated_at ?? comment.submitted_at ?? ''
   const id = key('github-comment', comment.html_url ?? `github:${ref.number}`, String(comment.id), version)
-  return { id, source: SOURCE, threads: [{ source: SOURCE, id: String(ref.number) }], ...author(comment.user, agent), at,
+  const addressed = mentions(comment.body ?? '', agent)
+  return { id, source: SOURCE, threads: [{ source: SOURCE, id: String(ref.number) }], ...author(comment.user, agent, addressed), at,
     text: commentText(comment, kind),
     ...(mentions(comment.body ?? '', agent) ? { addressed: 'mention' as const } : {}),
     channel: githubChannel(ref.number, comment.html_url ?? undefined),
