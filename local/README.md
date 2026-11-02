@@ -10,11 +10,17 @@
 | `docs/windows-patches.md` | 本地适配补丁逐条说明（症状 / 根因 / 改法）、升级 SOP、故障速查 |
 | `patches/dsh-superagent-windows-host.patch` | 可重放补丁：对干净上游 `git apply` 校验通过 |
 | `scripts/diagnose.mjs` | 一键诊断：采集 fork 状态、profile、state 目录、端口、API、插件日志，并给出结论 |
+| `scripts/supervisor.mjs` | 进程守护：直接持有 DSH 宿主进程，负责启动、崩溃自愈、停止与锁清理（替代依赖 tmux 的官方脚本） |
 | `scripts/verify-restart-survival.mjs` | 验收脚本：验证管理 API 在配置保存引发的 fiber 重启前后始终可用 |
 
 ## 运维命令
 
 ```bash
+# 启动（后台守护）/ 停止 / 状态
+node local/scripts/supervisor.mjs start --detach
+node local/scripts/supervisor.mjs stop
+node local/scripts/supervisor.mjs status
+
 # 诊断（服务停着也能跑）
 node local/scripts/diagnose.mjs                 # 打印并写入 ~/.dsh/state/superagent-diagnosis.txt
 

@@ -32,6 +32,13 @@
 | 7 | `src/app/http.ts:230-277` | 保存设置后管理 API 永久 404，必须重启整个 DSH 进程 | 宿主的 Web server 按**路径**存路由：重复注册抛错，disposer 也按路径删除。fiber 重启时新注册可能先于旧 disposer 执行 → 新注册被拒、旧 disposer 删掉路由 | 路由改为**进程级持有**：只注册一次，重启时换入当前 runtime 并重建路由表；旧 fiber 的 disposer 发现 runtime 已被接管则不删路由 |
 | 8 | `src/app/runtime.ts:166-172` | 启动失败没有任何日志，只表现为 404/400 | `initialize()` 的失败只变成 `this.ready` 的未处理 rejection | 失败时写一条 `ctx.logger.error`，并继续拒绝 `ready` |
 | 9 | `src/infra/diagnostics.ts`（新增）+ `src/app/runtime.ts`、`src/app/http.ts` | 宿主进程独立运行，日志行到不了启动它的终端，排查只能靠猜 | 插件没有自己的记录 | 插件把生命周期写进 `<stateDir>/diagnostics.log`（每行一个 JSON，有界）；`local/scripts/diagnose.mjs` 读它并给出结论 |
+| 10 | `local/scripts/supervisor.mjs`（新增） | 官方服务脚本依赖 tmux（Windows 没有），且 `dsh.cmd` 实际拉起的是 `DeepSeek Harness.exe`，杀掉 shell 包装不会杀掉宿主 | 没有进程托管 | 守护脚本直接持有宿主进程（`ELECTRON_RUN_AS_NODE=1`），负责启动、崩溃自愈、停止与锁清理；分别记录守护与宿主的 pid |
+
+### 关于补丁 10 踩到的三个坑
+
+1. **DSH 宿主是单实例应用**：已有实例在跑时，新实例会立刻以 code 1 退出。守护必须先探测面板是否已有应答，再决定要不要拉起，否则会陷入"拉起→秒退→再拉起"的循环。
+2. **pid 文件要分两个**：只记宿主 pid 时，`stop` 杀掉宿主后守护会立刻把它再拉起来，看起来"停不掉"。现在分别记录 `supervisor.pid` 与 `host.pid`，停止时先停守护再停宿主。
+3. **被强杀的宿主会留下锁目录**（`<stateDir>.lock`），下一个实例会以 "Lock file is already being held" 拒绝启动。守护在每次拉起前清理它——这正是本次调试耗时最久的一个症状。
 
 ### 关于补丁 7 的机制
 
