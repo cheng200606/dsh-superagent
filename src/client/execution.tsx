@@ -1,15 +1,48 @@
 /** Execution status view (active Tickets and pause control) and Execution settings group (Executor capacity and workspace environment). */
-import { useRef, useState } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import { TICKET_FILTERS, type TicketFilter } from '../app/api.ts'
 import { LIMITS } from '../limits.ts'
 import { usePoll, type SettingsView, type SourceView, type StateView } from './api.ts'
-import { DisclosureRow, Icon, InfoTip, Input, Pill } from './controls.tsx'
+import { Button, DisclosureRow, Icon, InfoTip, Input, Modal, Pill } from './controls.tsx'
 import { SaveBar } from './draft.tsx'
-import { usePanel } from './provider.tsx'
+import { useAction, usePanel } from './provider.tsx'
 import { TicketLine } from './rows.tsx'
 import { ConfigHistory, Field, Fields, ModelField, numberOf, useBlockDraft, useSettings } from './settings-kit.tsx'
 import { localized } from './text.ts'
 import { ConfirmButton, Hint, LabelValue, LoadMore, LoadState, Section, StatusHead } from './widgets.tsx'
+
+/** The operator's own creation path: a form that becomes a ticket at once (see `src/app/manual.ts`). */
+function CreateTicket({ reload }: { reload: () => Promise<void> }) {
+  const { t, call, navigate } = usePanel()
+  const [open, setOpen] = useState(false)
+  const [text, setText] = useState('')
+  const [title, setTitle] = useState('')
+  const create = useAction(async () => {
+    const result = await call('POST tickets', { body: { text, ...(title.trim() ? { title: title.trim() } : {}) } })
+    setOpen(false); setText(''); setTitle('')
+    if (result.ticket_id) navigate({ page: 'execution', id: result.ticket_id })
+  }, { reload })
+  const submit = (event: FormEvent) => { event.preventDefault(); if (text.trim()) void create.run() }
+  return <>
+    <Button variant="outline" icon={<Icon name="plus" size={14} />} onClick={() => setOpen(true)}>{t('createTicket')}</Button>
+    <Modal open={open} onClose={() => setOpen(false)} title={t('createTicket')} closeLabel={t('close')}
+      description={t('createTicketHint')}
+      footer={<>
+        <Button variant="ghost" onClick={() => setOpen(false)}>{t('close')}</Button>
+        <Button variant="primary" disabled={create.busy || !text.trim()} onClick={() => void create.run()}>{t('createTicketSubmit')}</Button>
+      </>}>
+      <form className="dt-form" onSubmit={submit}>
+        <Field label={t('createTicketTitle')} hint={t('createTicketTitleEmpty')}>
+          <Input value={title} maxLength={200} onChange={event => setTitle(event.target.value)} />
+        </Field>
+        <Field label={t('createTicketText')}>
+          <textarea className="dt-textarea" rows={6} required value={text} autoFocus
+            placeholder={t('createTicketTextEmpty')} onChange={event => setText(event.target.value)} />
+        </Field>
+      </form>
+    </Modal>
+  </>
+}
 
 export function ExecutionStatus({ filter: current, state, reload }: {
   filter: TicketFilter; state: StateView; reload: () => Promise<void>
@@ -32,6 +65,7 @@ export function ExecutionStatus({ filter: current, state, reload }: {
         <LabelValue label={t('executingLabel')}
           value={`${state.load.running} / ${maxWorkers}`} /><LabelValue label={t('queuedLabel')} value={state.load.queued} />
       </>}
+      {!state.setup.problem && <CreateTicket reload={reloadTickets} />}
       <ConfirmButton variant="outline" icon={paused ? 'play' : 'pause'} label={t(action)} title={t(action)} message={t(paused
         ? 'resumeProcessingConfirm' : 'pauseProcessingConfirm')}
         onConfirm={pause} />

@@ -88,6 +88,9 @@ it('syncs a Policy part again after a failed sync, a minute later and then after
 it('records nothing for a pause that changes nothing, refuses a sync while setup waits, and names an unknown block', async () => {
   h = await startRuntime()
   const { settings, store } = h.runtime
+  // The startup syncs (the operator's Policy roster among them) deliver their notices first.
+  await vi.waitFor(() => expect(h!.runtime.health['sync:manual']).toMatchObject({ state: 'ready' }))
+  await h.runtime.idle()
   const revision = store.blockRevision('pause')
   const inject = h.agents.get(h.runtime.masterId)!.inject
   inject.mockClear()

@@ -28,6 +28,9 @@ it('delivers the relays, subscription changes and notifications that a version b
 it('keeps only the latest settings notice while the main Session cannot take one', async () => {
   h = await startRuntime()
   const inject = h.agents.get(h.runtime.masterId)!.inject
+  // The startup syncs (the operator's Policy roster among them) deliver their notices first.
+  await vi.waitFor(() => expect(h!.runtime.health['sync:manual']).toMatchObject({ state: 'ready' }))
+  await h.runtime.idle()
   inject.mockImplementation(() => { throw new Error('session busy') })
   expect(await h.runtime.settings.pause(true, 'panel')).toEqual({ paused: true })
   await h.runtime.settings.pause(false, 'panel')

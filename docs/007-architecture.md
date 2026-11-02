@@ -331,6 +331,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/skill-files.ts` | Packaged text: `promptFile`, which joins a file's one-sentence lines into paragraphs, and the bundled skills |
 | `src/app/sessions.ts` | Sessions |
 | `src/app/capabilities.ts` | What the plugin needs from the host's tool registry, resolved at runtime: the role allow lists keep only what a Session's scope exposes, and a renamed shell tool is found again by its `command` parameters |
+| `src/app/manual.ts` | The operator's own request path: the `manual` Source kind whose roster keeps the operator allowed, a request's Trigger, and `createManualTicket`, which stores and at once accepts it |
 | `src/app/delivery.ts` | `AgentDelivery`: delivers a message to a DeepSeek Harness agent once per request id, also across a restored Session |
 | `src/app/retry-health.ts` | `RetryHealth`: which Sessions wait on a model budget retry, for the `models` health entry |
 | `src/app/role-models.ts` | Resolves the Eval and Executor models, and seeds a new Session with its role's model |
@@ -430,6 +431,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/delivery.spec.ts` | `AgentDelivery` |
 | `tests/retry-health.spec.ts`, `tests/role-models.spec.ts` | Model budget retries, and the models of the two roles |
 | `tests/runtime.spec.ts` | The whole application on a simulated DeepSeek Harness host, through tools and HTTP |
+| `tests/manual.spec.ts` | The operator's manual request path: the roster that keeps the operator allowed, a request that becomes a ticket at once, and the refusals |
 | `tests/capabilities.spec.ts` | The capability-detection layer: role allow lists keep what a scope exposes, and a renamed shell is found by its parameters |
 | `tests/tools.spec.ts` | The Sessions' tools: what `orchestrator_read` reads for each role, and the shapes and checks of the other main Session tools |
 | `tests/runtime-concurrency.spec.ts` | Work that overlaps: Triggers during a pass, Tickets that change during deliveries and launches |

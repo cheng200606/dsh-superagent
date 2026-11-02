@@ -96,6 +96,13 @@ const TEXT = {
   restartInterrupts: ['保存会重启 dsh-superagent：{count} 个进行中的派工会中断，并带恢复说明重新开始。', 'Saving restarts dsh-superagent: {count} running Assignments stop and start again with a recovery note.'],
   sourceOff: ['已关闭', 'Off'],
   executorWaitingSetup: ['执行器等待部署检查', 'Executor waiting for the deployment check'],
+  createTicket: ['新建工单', 'New ticket'],
+  createTicketHint: ['描述要做的事；工单会立即以你的名义建立并派发，像一条显式请求。', 'Describe what to do; the ticket is created in your name and dispatched at once, like an explicit request.'],
+  createTicketTitle: ['标题', 'Title'],
+  createTicketTitleEmpty: ['可选；默认用请求的第一行', 'Optional; defaults to the first line of the request'],
+  createTicketText: ['请求', 'Request'],
+  createTicketTextEmpty: ['例如：把 README 的安装一节翻译成英文', 'For example: translate the installation section of the README into English'],
+  createTicketSubmit: ['创建并派发', 'Create and dispatch'],
   // Header, search, and tabs
   panel: ['Superagent', 'Superagent'],
   openMaster: ['打开主 Session', 'Open main Session'],
