@@ -17,6 +17,7 @@
     "./github-watch": "./lib/github-watch.js",
     "./feishu-watch": "./lib/feishu-watch.js",
     "./localdir-watch": "./lib/localdir-watch.js",
+    "./webhook-watch": "./lib/webhook-watch.js",
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json"
   },

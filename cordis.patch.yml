@@ -9,6 +9,9 @@
     # Local directory Source: requests come from files in a watched folder; it needs no account.
     - id: dsh-superagent-localdir
       name: dsh-superagent/localdir-watch
+    # Local webhook Source: a program on this machine POSTs a request to a loopback endpoint; it needs no account.
+    - id: dsh-superagent-webhook
+      name: dsh-superagent/webhook-watch
     # Optional Feishu Source; requires configuring a bot CLI after enabling.
     - id: dsh-superagent-feishu
       name: dsh-superagent/feishu-watch
